@@ -7,7 +7,6 @@ const checkAuth = async( req: Request, res: Response, next: NextFunction ) => {
     if(!authorization) return res.status(404).send("Unauthorized, kindly login as an admin");
 
     const isVerified = verifyToken(authorization);
-    console.log("e", isVerified);
 
     if(!isVerified.valid) return res.status(401).send("Invalid token, kindly login as an admin")
 

@@ -1,4 +1,3 @@
-
 import mongoose from "mongoose";
 
 // main().catch(err => console.log(err));

@@ -2,7 +2,7 @@
 import { Schema, model } from "mongoose";
 
 interface IReview {
-    name: string;
+    // name: string;
     review: string;
     user: {
         name: string;
@@ -13,14 +13,13 @@ interface IReview {
 }
 
 const reviewSchema = new Schema<IReview>({
-    name: {required: true, type: String},
     review: {required: true, type: String},
     user: {
         name: {required: true, type: String},
-        profile_picture: {required: true, type: String},
+        profile_picture: {required: false, type: String},
         id: {required: true, type: String},
     },
-    vendor_id: {required: false, type: String},
+    vendor_id: {required: true, type: String},
 }, { timestamps: true })
 
 export { reviewSchema }

@@ -1,35 +1,118 @@
 import { Request, Response, Router } from "express";
 import User from "../schema/userSchema";
 import { verifyToken } from "../utils/tokens";
-
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 const userRouter = Router();
 
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
+
 userRouter
-.post("/change_picture", async (req: Request, res: Response) => {
-   
+.post("/change_picture", upload.single('image'), async (req: Request, res: Response) => {
+    try {
+        const { authorization } = req.headers;
+        if (!authorization) {
+            res.status(401).json({ message: 'Authorization header missing' });
+            return
+        }
+
+        const { valid, isVerified } = verifyToken(authorization);
+        if (!valid || !isVerified?.email) {
+            res.status(401).json({ message: 'Token is not valid' });
+            return
+        }
+
+        if (!req.file) {
+            res.status(400).json({ message: 'No file uploaded' });
+            return
+        }
+
+        const user = await User.findOne({ email: isVerified.email });
+        if (!user) {
+            res.status(404).json({ message: 'User not found' });
+            return
+        }
+
+        user.picture = `/uploads/${req.file.filename}`;
+        await user.save();
+
+        res.status(200).json({
+            message: 'Picture updated successfully',
+            filePath: user.picture,
+            filename: req.file.filename,
+        });
+
+    } catch (error: any) {
+        console.error("Error changing picture:", error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+        return
+    }
+})
+.get("/all", async (req: Request, res: Response) => {
+   const { authorization } = req.headers;
+   const verify = verifyToken(authorization);
+   if(!verify.valid) {
+      res.status(401).send("Token not valid");
+      return;
+   }
+
+   try {
+        const allUsers = await User.find({ is_vendor: false }).select('-password -__v');
+
+        if (!allUsers || allUsers.length === 0) {
+            res.status(404).json({ message: 'No users found' });
+            return;
+        }
+        res.status(200).json({
+            message: 'Success',
+            users: allUsers,
+            count: allUsers.length,
+        });
+    } catch (error: any) {
+        res.status(500).json({
+            message: `Unable to get users - ${error.message || error.toString()}`,
+        });
+    }
 })
 .put("/update_profile", async(req: Request, res: Response) => {
-    const { email, NIN, area, phone_number } = req.body;
+    const { email, nin, area, phone_number } = req.body;
 
     try {
         const user = await User.findOne({ email });
         if(!user) {
-            res.status(404).send("User with this email does not exist!");
+            res.status(404).json({message: "User with this email does not exist!"});
             return;
         }
 
-        if(NIN && NIN.toString().length !== 11) {
-            res.status(400).send("NIN should be 10 digit");
+        if(nin && nin.toString().length !== 11) {
+            res.status(400).json({message: "NIN should be 10 digit"});
             return;
         }
 
         if(!phone_number) {
-            res.status(400).send("Kindly input your phone number");
+            res.status(400).json({message: "Kindly input your phone number"});
             return;
         }
 
         if(!area) {
-            res.status(400).send("Kindly input your location in abuja");
+            res.status(400).json({message: "Kindly input your location in abuja"});
             return;
         }
     
@@ -39,41 +122,64 @@ userRouter
         const saved = await user.save();
         res.status(200).json({
             user: saved,
-            message: "Success"
+            message: "Your profile has been saved successfully"
         })
     } catch (error: any) {
-        res.status(500).send(`Unable to edit user, please try again - ${error}`)
+        res.status(500).json({message: `Unable to edit user, please try again - ${error}`})
     }
 })
 .put("/update_usertype", async (req: Request, res: Response) => {
-     const { authorization } = req.headers;
-    const verify = verifyToken(authorization);
-    if(!verify.valid) {
-        res.status(401).send("Token not valid");
+    const { authorization } = req.headers;
+    const { valid, isVerified } = verifyToken(authorization);
+    if(!valid) {
+        res
+        .status(401)
+        .json({message: "Token not valid"});
         return;
     }
 
     try {
-        const { email } = verify.isVerified as any;
+        const { email } = isVerified as any;
         const user = await User.findOne({ email });
 
-        if(user) {
-            if(user.is_vendor) {
-                user.is_vendor = false;
-                await user.save(); 
-
-                res.status(200).json({ message: "Vendor is now a user", user })
-            }else {
-                user.is_vendor = true;
-                await user.save();
-
-                res.status(200).json({ message: "User is already a vendor", user })
-            }
-
-            
+        if(!user) {
+            res
+            .status(404)
+            .json({ message: "This user does not exist!"})
+            return;
         }
-    } catch (error) {
-        res.status(500).send(`This user cannot be a vendor - ${error}`)
+        if(user.is_active) {
+            res
+            .status(400)
+            .json({ message: "This vendor is currently active and has not completed current task!"})
+            return;
+        }
+
+        if(user.is_vendor) {
+            user.is_vendor = false;
+            await user.save(); 
+            res
+            .status(200)
+            .json({ 
+                message: "This vendor has been updated to a user", 
+                user 
+            })
+        }else {
+            user.is_vendor = true;
+            await user.save();
+            res
+            .status(200)
+            .json({ 
+                message: "This user has been updated to a vendor", 
+                user 
+            })
+        }
+    } catch (error) { 
+        res
+        .status(500)
+        .json({
+            message: `This user type cannot be updated - ${error}`
+        })
     }
 })
 

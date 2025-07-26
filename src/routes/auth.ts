@@ -1,12 +1,12 @@
 import { Request, Response, Router } from "express";
 import User from "../schema/userSchema";
+import Wallet from "../schema/walletSchema";
 import { createToken, generateOtp, resetToken, verifyToken } from "../utils/tokens";
 import bcryptjs from "bcryptjs";
 import { sendMail, sendOTP } from "../utils/email";
-
+import { v4 as uuidv4 } from 'uuid';
 
 const salt = 10;
-
 const authRouter = Router();
 
 authRouter
@@ -24,11 +24,21 @@ authRouter
             const userDetails = {first_name, last_name, email};
 
             const token = createToken(userDetails);
-
+            const chat_id = uuidv4();
             const user = await User.create({
                 ...req.body,
-                password: hashedPassword
+                password: hashedPassword,
+                picture: null,
+                chat_id
             });
+            const wallet = new Wallet({
+                user_id: user._id,
+                currency_code: "NGN",
+                balance: 0,
+                is_active: true
+            });
+            await wallet.save();
+          
 
             await user.save();
             
@@ -38,7 +48,7 @@ authRouter
                 user
             })
         }else{
-            res.status(403).send("user already exist, kindly login to continue")
+            res.status(403).json({message: "user already exist, kindly login to continue"})
         }
     } catch (error) {
         res.status(500).json({
@@ -55,9 +65,6 @@ authRouter
             email: email
         });
         
-        console.log("user", user);
-        
-    
         if(!user) {
             res.status(404).json({
                 suceess: false, 
@@ -71,7 +78,7 @@ authRouter
             res.status(401).json({success: false, message: "Incorrect password!"});
             return;
         }
-    
+
         const userDetails = {
             first_name: user.first_name, 
             last_name: user.last_name, 
@@ -102,7 +109,7 @@ authRouter
         email
     });
 
-    if(!user) res.status(404).send("user does not exist!");
+    if(!user) res.status(404).json({message: "user does not exist!"});
     else {
         const { first_name, password, phone_number } = user;
 
@@ -120,37 +127,43 @@ authRouter
 
         await user.save();
 
-        sendOTP({ email, otp })
-        .then((resp) => {
-            console.log("re", resp);
-            res.status(200).json({
-                success: true,
-                message: "otp sent successful",
-                token
-            })
+        res.status(200).json({
+            success: true,
+            message: "otp sent successful",
+            token
         })
-        .catch((err) => {
-            console.log("er",err);
-            res.status(400).send("Soemthing went wrong!");  
-        })
+
+        // sendOTP({ email, otp })
+        // .then((resp) => {
+        //     console.log("re", resp);
+        //     res.status(200).json({
+        //         success: true,
+        //         message: "otp sent successful",
+        //         token
+        //     })
+        // })
+        // .catch((err) => {
+        //     console.log("er",err);
+        //     res.status(400).send("Soemthing went wrong!");  
+        // })
     }
 })
 .post("/reset-password/:token", async(req: Request, res: Response) => {
     const { token } = req.params;
     const { email, otp, password } = req.body;
 
-    const isVerified = verifyToken(token);
+    const { valid } = verifyToken(token);
 
-    if(!isVerified) res.status(401).json({
+    if(!valid) res.status(401).json({
         message: "invalid token"
     });
     else {
         const user = await User.findOne({
             email: email
         });
-
+        
         if(user) {
-            if(otp !== user.otp) {
+            if(Number(otp) !== user.otp) {
                 res.status(400).send("Otp has expired!")
             }else if(token !== user.resetToken) {
                 res.status(400).send("token is not valid!")

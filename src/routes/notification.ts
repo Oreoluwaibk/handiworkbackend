@@ -1,13 +1,15 @@
 import { Request, Response, Router } from "express";
 import Notification from "../schema/notificationScheme";
+import { authentication } from "../middleware/authentication";
 
 
 const notificationRouter = Router();
 
 notificationRouter
-.get("/", async (req: Request, res: Response) => {
+.get("/", authentication, async (req: Request, res: Response) => {
+    const user = (req as any).user;
     try {
-        const allNotification = await Notification.find();
+        const allNotification = await Notification.find({ user_id: user._id });
 
         res.status(200).json({
             notifications: allNotification,

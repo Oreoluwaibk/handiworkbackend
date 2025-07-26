@@ -1,14 +1,24 @@
+
 import nodemailer, { createTransport } from "nodemailer";
 
-const transporter = createTransport({
-    host: "smtp.ethereal.email",
-    port: 587,
-    secure: false,
-    auth: {
-        user: process.env.SMTP_EMAIL,
-        pass: process.env.SMTP_PASSWORD,
-    }
-})
+const transporter = nodemailer.createTransport({
+  host: "smtp.ethereal.email",
+  port: 587,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: "ore.ibikunle98@gmail.com",
+    pass: "jn7jnAPss4f63QBp6D",
+  },
+});
+// const transporter = createTransport({
+//     host: "smtp.ethereal.email",
+//     port: 587,
+//     secure: false,
+//     auth: {
+//         user: process.env.SMTP_EMAIL,
+//         pass: process.env.SMTP_PASSWORD,
+//     }
+// })
 
 export const sendMail = async ({ email, token }: { email: string, token: string}) => {
     const info  = await transporter.sendMail({
@@ -24,15 +34,14 @@ export const sendMail = async ({ email, token }: { email: string, token: string}
 }
 
 export const sendOTP = async ({ email, otp }: { email: string, otp: number}) => {
-    const info  = await transporter.sendMail({
+    const info = await transporter.sendMail({
         from: '"handiwork" <handiwork@admin.com>',
-        to: email,
-        subject: "OTP fron Handiork",
-        text: "Input your otp to continue your registration",
-        html: `<p><span>${otp}</a></p>`
+        to: "email",
+        subject: "OTP from Handiwork",
+        text: "Input your OTP to continue your registration",
+        html: `<p><strong>${otp}</strong></p>`,
     });
 
-    console.log("mail sent", info.messageId);
-    
+    console.log("✅ Mail sent:", info.messageId); 
 }
 

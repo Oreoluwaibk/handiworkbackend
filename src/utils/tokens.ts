@@ -16,18 +16,19 @@ export const resetToken = (user:any) => {
     return token;
 }
 
-export const verifyToken = (token: any) => {
-    console.log("token",token);
+export const verifyToken = (token: any): any => {
     try {
         const isVerified = verify(token, privateKey as any);
         return {
             valid: true,
-            isVerified
+            isVerified,
+            error: null
         };
     } catch (error) {
         return {
             valid: false,
-            error
+            error,
+            isVerified: null
         }
     }
 }

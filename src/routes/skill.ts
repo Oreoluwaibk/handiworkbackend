@@ -11,6 +11,7 @@ skillRouter
 
         res.status(200).json({
             skills: allSkill,
+            count: allSkill.length,
             message: "success"
        })
     } catch (error) {
@@ -142,6 +143,19 @@ skillRouter
     //         message: "success"
     //     })
     // }
+})
+.delete("/multiple", async(req: Request, res: Response) => {
+    try {
+        const skill = await Skill.deleteMany({})
+         res.status(200).json({
+                message: "success"
+            })
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: `unable to delete this skill, ${error}`
+        })
+    }
 })
 
 
