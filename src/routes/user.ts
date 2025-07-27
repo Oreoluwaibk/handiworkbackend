@@ -4,6 +4,7 @@ import { verifyToken } from "../utils/tokens";
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { authentication } from "../middleware/authentication";
 const userRouter = Router();
 
 const uploadDir = path.join(__dirname, '../uploads');
@@ -182,6 +183,39 @@ userRouter
         })
     }
 })
+.delete("/", authentication, async (req: Request, res: Response) => {
+    const { email, is_active } = (req as any).user;
+
+    try {
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            res.status(404).json({ message: "User not found." });
+            return;
+        }
+
+        if (is_active) {
+            res.status(400).json({
+                message: "This vendor is currently active and has not completed current task!"
+            });
+            return;
+        }
+
+        user.is_deleted = true; 
+        await user.save();
+
+        res.status(200).json({
+            message: "User has been deactivated!",
+        });
+        return;
+
+    } catch (error) {
+        res.status(500).json({
+            message: `This user could not be deleted - ${error}`
+        });
+        return;
+    }
+});
 
 
 export default userRouter;

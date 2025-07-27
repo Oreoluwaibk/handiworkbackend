@@ -72,6 +72,13 @@ authRouter
             });
             return;
         }
+        if(user.is_deleted) {
+            res.status(404).json({
+                suceess: false, 
+                message: "User has been deactiviated, kindly reactivate your account or contact admin!"
+            });
+            return;
+        }
         const isPasswordCorrect = bcryptjs.compareSync(password, user?.password);
     
         if(!isPasswordCorrect) {
@@ -86,6 +93,20 @@ authRouter
             email, 
             phone_number: user.phone_number
         };
+        // const chat_id = uuidv4();
+        // if(!user.chat_id) {
+        //     user.chat_id = chat_id;
+        //     await user.save();
+        //     console.log("chat +id", chat_id);
+            
+        // }
+        // const wallet = new Wallet({
+        //     user_id: user._id,
+        //     currency_code: "NGN",
+        //     balance: 0,
+        //     is_active: true
+        // });
+        // await wallet.save();
     
         const token = createToken(userDetails);
     
