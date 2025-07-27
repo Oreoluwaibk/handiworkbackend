@@ -22,6 +22,10 @@ export async function authentication(req: AuthenticatedRequest, res: Response, n
   }
 
   const user = await User.findOne({ email: isVerified.email })
+  if (user?.is_deleted) {
+    res.status(404).json({ message: 'User has been deactiviated, kindly activate or contact admin' });
+    return;
+  }
   req.user = user;
   next();
 }
