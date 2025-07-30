@@ -1,8 +1,4 @@
 import { Request, Response, Router } from "express";
-import User from "../schema/userSchema";
-import { createToken, generateOtp, resetToken, verifyToken } from "../utils/tokens";
-import bcryptjs from "bcryptjs";
-import { sendMail, sendOTP } from "../utils/email";
 import Category from "../schema/categorySchema";
 
 
