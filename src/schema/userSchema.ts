@@ -25,6 +25,7 @@ interface IUser {
     nin?: string;
     chat_id?: string; 
     is_deleted: boolean;
+    work_images?: string[];
 }
 
 const userSchema = new Schema<IUser>({
@@ -50,6 +51,7 @@ const userSchema = new Schema<IUser>({
     nin: {required: false, type: String, default: null},
     chat_id: { type: String, required: false, default: null },
     is_deleted: { type: Boolean, required: true, default: false },
+    work_images: {required: false, type: Array, default: []},
 }, { timestamps: true })
 
 export { userSchema }

@@ -3,7 +3,7 @@ import User from "../schema/userSchema";
 import Wallet from "../schema/walletSchema";
 import { createToken, generateOtp, resetToken, verifyToken } from "../utils/tokens";
 import bcryptjs from "bcryptjs";
-import { sendMail, sendOTP } from "../utils/email";
+import { sendOtp, sendWelcomeEmail } from "../utils/email";
 import { v4 as uuidv4 } from 'uuid';
 
 const salt = 10;
@@ -139,34 +139,21 @@ authRouter
         const token = resetToken(userDetails);
         const otp = generateOtp();
 
-        console.log("toor", otp);
-        
-
         user.resetToken = token;
         user.otp = otp;
-        
 
         await user.save();
-
-        res.status(200).json({
-            success: true,
-            message: "otp sent successful",
-            token
+        sendOtp(email, otp, user.first_name)
+        .then((resp) => {
+            res.status(200).json({
+                success: true,
+                message: "otp sent successful",
+                token
+            })
         })
-
-        // sendOTP({ email, otp })
-        // .then((resp) => {
-        //     console.log("re", resp);
-        //     res.status(200).json({
-        //         success: true,
-        //         message: "otp sent successful",
-        //         token
-        //     })
-        // })
-        // .catch((err) => {
-        //     console.log("er",err);
-        //     res.status(400).send("Soemthing went wrong!");  
-        // })
+        .catch((err) => {
+            res.status(400).json({message: "Unable to reset your password, try again or contact admin!"});  
+        })
     }
 })
 .post("/reset-password/:token", async(req: Request, res: Response) => {

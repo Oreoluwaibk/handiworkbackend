@@ -5,6 +5,14 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { authentication } from "../middleware/authentication";
+import cloudinary from "../utils/cloudinary";
+// import upload from '../middlewares/multer';
+// import cloudinary from '../config/cloudinary';
+// import fs from 'fs';
+// import path from 'path';
+// import { verifyToken } from '../utils/verifyToken'; // Adjust based on your structure
+// import User from '../models/User'; // Adjust import path if needed
+
 const userRouter = Router();
 
 const uploadDir = path.join(__dirname, '../uploads');
@@ -26,44 +34,88 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 userRouter
-.post("/change_picture", upload.single('image'), async (req: Request, res: Response) => {
+.post("/change-picture", authentication, upload.single('image'), async (req: Request, res: Response) => {
     try {
-        const { authorization } = req.headers;
-        if (!authorization) {
-            res.status(401).json({ message: 'Authorization header missing' });
-            return
-        }
-
-        const { valid, isVerified } = verifyToken(authorization);
-        if (!valid || !isVerified?.email) {
-            res.status(401).json({ message: 'Token is not valid' });
-            return
-        }
-
+        const user = (req as any).user;
         if (!req.file) {
             res.status(400).json({ message: 'No file uploaded' });
-            return
+            return;
         }
 
-        const user = await User.findOne({ email: isVerified.email });
         if (!user) {
             res.status(404).json({ message: 'User not found' });
-            return
+            return;
         }
 
-        user.picture = `/uploads/${req.file.filename}`;
+        // Upload to Cloudinary
+        const filePath = req.file.path;
+        const result = await cloudinary.uploader.upload(filePath, {
+            folder: 'handiwork_users'
+        });
+
+        fs.unlinkSync(filePath);        
+        user.picture = result.secure_url;
         await user.save();
 
         res.status(200).json({
             message: 'Picture updated successfully',
-            filePath: user.picture,
-            filename: req.file.filename,
+            imageUrl: result.secure_url,
+            public_id: result.public_id
         });
 
     } catch (error: any) {
         console.error("Error changing picture:", error);
         res.status(500).json({ message: 'Server error', error: error.message });
-        return
+    }
+})
+.post("/upload-work", authentication, upload.array('images', 5), async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+
+        // Check if files are uploaded
+        if (!req.files || !(req.files instanceof Array) || req.files.length === 0) {
+            res.status(400).json({ message: 'No files uploaded' });
+            return;
+        }
+
+        // Additional server-side check: Max 5 files
+        if (req.files.length > 5) {
+            res.status(400).json({ message: 'You can only upload a maximum of 5 images.' });
+            return;
+        }
+
+        const uploadResults: { url: string, public_id: string }[] = [];
+
+        for (const file of req.files) {
+            const filePath = (file as Express.Multer.File).path;
+
+            const result = await cloudinary.uploader.upload(filePath, {
+                folder: 'handiwork_workdone'
+            });
+
+            uploadResults.push({
+                url: result.secure_url,
+                public_id: result.public_id
+            });
+
+            fs.unlinkSync(filePath); // Delete local file after upload
+        }
+
+        // Save the image URLs to user model (adjust this field as needed)
+        user.work_images = uploadResults.map(r => r.url);
+        await user.save();
+
+        res.status(200).json({
+            message: 'Work images uploaded successfully',
+            images: uploadResults.map(r => r.url)
+        });
+
+    } catch (error: any) {
+        console.error("Error uploading work images:", error);
+        res.status(500).json({
+            message: 'Server error',
+            error: error.message
+        });
     }
 })
 .get("/all", async (req: Request, res: Response) => {
@@ -92,95 +144,76 @@ userRouter
         });
     }
 })
-.put("/update_profile", async(req: Request, res: Response) => {
-    const { email, nin, area, phone_number } = req.body;
+.put("/update-profile", authentication, async (req: Request, res: Response) => {
+    const { nin, area, phone_number } = req.body;
 
     try {
-        const user = await User.findOne({ email });
-        if(!user) {
-            res.status(404).json({message: "User with this email does not exist!"});
+        const user = (req as any).user;
+
+        if (nin && nin.toString().length !== 11) {
+            res.status(400).json({ message: "NIN should be 11 digits" });
             return;
         }
 
-        if(nin && nin.toString().length !== 11) {
-            res.status(400).json({message: "NIN should be 10 digit"});
+        if (!phone_number) {
+            res.status(400).json({ message: "Kindly input your phone number" });
             return;
         }
 
-        if(!phone_number) {
-            res.status(400).json({message: "Kindly input your phone number"});
+        if (!area) {
+            res.status(400).json({ message: "Kindly input your location in Abuja" });
             return;
         }
 
-        if(!area) {
-            res.status(400).json({message: "Kindly input your location in abuja"});
-            return;
+        if (user.is_vendor && user.is_active) {
+            res.status(400).json({
+                message: "This vendor is currently active and has not completed the current task! Complete task to update profile"
+            });
+            return
         }
-    
-        await user.updateOne({
-            ...req.body
-        });
-        const saved = await user.save();
+
+        Object.assign(user, req.body);
+
+        const savedUser = await user.save();
+
         res.status(200).json({
-            user: saved,
-            message: "Your profile has been saved successfully"
-        })
+            message: "Your profile has been saved successfully",
+            user: savedUser,
+        });
+
     } catch (error: any) {
-        res.status(500).json({message: `Unable to edit user, please try again - ${error}`})
+        res.status(500).json({
+            message: "Unable to edit user, please try again",
+            error: error.message,
+        });
     }
 })
-.put("/update_usertype", async (req: Request, res: Response) => {
-    const { authorization } = req.headers;
-    const { valid, isVerified } = verifyToken(authorization);
-    if(!valid) {
-        res
-        .status(401)
-        .json({message: "Token not valid"});
-        return;
-    }
-
+.put("/update-usertype", authentication, async (req: Request, res: Response) => {
+    const user = (req as any).user;
     try {
-        const { email } = isVerified as any;
-        const user = await User.findOne({ email });
-
-        if(!user) {
-            res
-            .status(404)
-            .json({ message: "This user does not exist!"})
-            return;
-        }
-        if(user.is_active) {
-            res
-            .status(400)
-            .json({ message: "This vendor is currently active and has not completed current task!"})
-            return;
+        if (user.is_active) {
+            res.status(400).json({
+                message: "This vendor is currently active and has not completed the current task!"
+            });
+            return
         }
 
-        if(user.is_vendor) {
-            user.is_vendor = false;
-            await user.save(); 
-            res
-            .status(200)
-            .json({ 
-                message: "This vendor has been updated to a user", 
-                user 
-            })
-        }else {
-            user.is_vendor = true;
-            await user.save();
-            res
-            .status(200)
-            .json({ 
-                message: "This user has been updated to a vendor", 
-                user 
-            })
-        }
-    } catch (error) { 
-        res
-        .status(500)
-        .json({
-            message: `This user type cannot be updated - ${error}`
-        })
+        user.is_vendor = !user.is_vendor;
+        await user.save();
+
+        res.status(200).json({
+            message: user.is_vendor
+                ? "This user has been updated to a vendor"
+                : "This vendor has been updated to a user",
+            user
+        });
+        return
+
+    } catch (error: any) {
+        res.status(500).json({
+            message: "This user type cannot be updated",
+            error: error.message
+        });
     }
 })
 .delete("/", authentication, async (req: Request, res: Response) => {
