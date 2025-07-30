@@ -3,7 +3,7 @@ import User from "../schema/userSchema";
 import Wallet from "../schema/walletSchema";
 import { createToken, generateOtp, resetToken, verifyToken } from "../utils/tokens";
 import bcryptjs from "bcryptjs";
-import { sendOtp, sendWelcomeEmail } from "../utils/email";
+import { sendOtp } from "../utils/email";
 import { v4 as uuidv4 } from 'uuid';
 
 const salt = 10;
