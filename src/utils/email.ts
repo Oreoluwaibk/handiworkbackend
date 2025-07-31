@@ -20,7 +20,6 @@ transporter.use(
   hbs({
     viewEngine: {
       partialsDir: path.resolve('./src/views/'),
-      // ❌ defaultLayout: false, ← REMOVE THIS
     },
     viewPath: path.resolve('./src/views/'),
     extName: '.handlebars',
