@@ -12,15 +12,14 @@ const reviewRouter = Router();
 
 reviewRouter
 .get("/", authentication, async (req: Request, res: Response) => {
-    const user = (req as any).user;
-    
     try {
         const { limit, skip, page } = getPagination(req);
-        
+
         const [reviews, total] = await Promise.all([
             Review.find()
-            .skip(skip)
-            .limit(limit),
+                .skip(skip)
+                .limit(limit)
+                .populate("user", "first_name last_name picture"), // fetch live user info
             Review.countDocuments(),
         ]);
 
@@ -32,10 +31,11 @@ reviewRouter
             pages: Math.ceil(total / limit),
         });
 
-        
     } catch (error: any) {
-        res.status(500).json({message: `Unable to get reviews: ${error.message}`});
-    }  
+        res.status(500).json({
+            message: `Unable to get reviews: ${error.message}`,
+        });
+    }
 })
 .post("/", authentication, async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -45,24 +45,15 @@ reviewRouter
         const newReview = await Review.create({
             vendor_id,
             review,
-            user: {
-                id: user._id,
-                profile_picture: user.picture,
-                name: `${user.first_name} ${user.last_name || ""}`
-            }
+            user: user._id
         })
 
         await newReview.save();
-
-        console.log("ddd");
-        
 
         res.status(200).json({
             message: "Success",
             review: newReview
         });
-
-        
     } catch (error: any) {
         res.status(500).json({message: `Unable to get reviews: ${error.message}`});
     }  
@@ -73,13 +64,11 @@ reviewRouter
     try {
         const { limit, skip, page } = getPagination(req);
 
-        console.log("dhdhd", id);
-        
-        
         const [reviews, total] = await Promise.all([
             Review.find({vendor_id: id})
             .skip(skip)
-            .limit(limit),
+            .limit(limit)
+            .populate("user", "first_name last_name picture"), 
             Review.countDocuments({ vendor_id: id }),
         ]);
 

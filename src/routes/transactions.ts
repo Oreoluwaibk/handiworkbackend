@@ -13,7 +13,7 @@ import Notification from '../schema/notificationScheme';
 const transactionRouter = express.Router();
 
 // Shared function to process a transaction
-async function processTransaction({ user_id, type, amount, description }: {
+export async function processTransaction({ user_id, type, amount, description }: {
   user_id: string;
   type: 'deposit' | 'withdraw';
   amount: number;

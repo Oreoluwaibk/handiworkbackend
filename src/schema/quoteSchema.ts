@@ -1,7 +1,7 @@
 
 import { Schema, model } from "mongoose";
 
-interface IQuote {
+export interface IQuote {
     title: string;
     description: string;
     vendor_comment: string;
@@ -9,13 +9,15 @@ interface IQuote {
         name: string;
         picture: string;
         id: string;
+        chat_id: string;
     };
     vendor: {
         name: string;
         picture: string;
         id: string;
+        chat_id: string;
     };
-    amount: number | null;
+    amount: number;
     status: string;
 }
 
@@ -27,14 +29,17 @@ const quoteSchema = new Schema<IQuote>({
         name: {required: true, type: String},
         picture: {required: false, type: String, default: null},
         id: {required: true, type: String},
+        chat_id: {required: false, type: String},
     },
     vendor: {
         name: {required: true, type: String},
         picture: {required: false, type: String, default: null},
         id: {required: true, type: String},
+        chat_id: {required: false, type: String},
+
     },
     status: {required: false, type: String, default: "pending"},
-    amount: {required: false, type: Number, default: null},
+    amount: {required: false, type: Number, default: 0},
 }, { timestamps: true })
 
 export { quoteSchema }
