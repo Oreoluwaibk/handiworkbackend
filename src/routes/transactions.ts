@@ -148,6 +148,8 @@ transactionRouter.post('/deposit/paystack', authentication, async (req, res) => 
   const user = (req as any).user;
 
   try {
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) return res.status(401).json({ message: 'Invalid password' });
     const initResponse = await initializePayment({
       email: user.email,
       amount: parseFloat(amount),
