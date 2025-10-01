@@ -11,45 +11,46 @@ const authRouter = Router();
 
 authRouter
 .post("/register", async (req: Request, res: Response) => {
-    console.log("req", req.body);
     try {
         const { first_name, last_name, email, password } = req.body;
-        const isUser = await User.findOne({
-            email: email 
-        });
+        const isUser = await User.findOne({ email });
 
-        if(!isUser) {
-            const hashedPassword = bcryptjs.hashSync(password, salt);
-
-            const userDetails = {first_name, last_name, email};
-
-            const token = createToken(userDetails);
-            const chat_id = uuidv4();
-            const user = await User.create({
-                ...req.body,
-                password: hashedPassword,
-                picture: null,
-                chat_id
-            });
-            const wallet = new Wallet({
-                user_id: user._id,
-                currency_code: "NGN",
-                balance: 0,
-                is_active: true
-            });
-            await wallet.save();
-          
-
-            await user.save();
-            
-            res.status(200).json({
-                token,
-                message: "Registration successfully",
-                user
-            })
-        }else{
-            res.status(403).json({message: "user already exist, kindly login to continue"})
+        if(isUser) {
+            res
+            .status(400)
+            .json({message: "user already exist, kindly login to continue"})
+            return;
         }
+
+        const hashedPassword = bcryptjs.hashSync(password, salt);
+        const userDetails = {
+            first_name, 
+            last_name, 
+            email
+        };
+
+        const token = createToken(userDetails);
+        const chat_id = uuidv4();
+        const user = await User.create({
+            ...req.body,
+            password: hashedPassword,
+            picture: null,
+            chat_id
+        });
+        const wallet = new Wallet({
+            user_id: user._id,
+            currency_code: "NGN",
+            balance: 0,
+            is_active: true
+        });
+        await wallet.save();
+        await user.save();
+        
+        res.status(200).json({
+            token,
+            message: "Registration successfully",
+            user
+        })
     } catch (error) {
         res.status(500).json({
             success: false,
@@ -126,9 +127,7 @@ authRouter
 .post("/forgot-password", async(req: Request, res: Response) => {
     const { email } = req.body;
 
-    const user = await User.findOne({
-        email
-    });
+    const user = await User.findOne({ email });
 
     if(!user) res.status(404).json({message: "user does not exist!"});
     else {
@@ -147,7 +146,7 @@ authRouter
         .then((resp) => {
             res.status(200).json({
                 success: true,
-                message: "otp sent successful",
+                message: "otp sent successful, kindly check mail or spam",
                 token
             })
         })

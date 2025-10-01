@@ -6,12 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { authentication } from "../middleware/authentication";
 import cloudinary from "../utils/cloudinary";
-// import upload from '../middlewares/multer';
-// import cloudinary from '../config/cloudinary';
-// import fs from 'fs';
-// import path from 'path';
-// import { verifyToken } from '../utils/verifyToken'; // Adjust based on your structure
-// import User from '../models/User'; // Adjust import path if needed
+import axios from 'axios';
 
 const userRouter = Router();
 
@@ -30,6 +25,43 @@ const storage = multer.diskStorage({
     cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
   },
 });
+
+// const options = {
+//   method: 'POST',
+//   url: 'https://api.qoreid.com/v1/ng/identities/nin/idNumber',
+//   headers: {accept: 'application/json', 'content-type': 'application/json'},
+//   data: {firstname: 'Bunch', lastname: 'Dillon'}
+// };
+    
+// // https://api.qoreid.com/v1/ng/identities/nin/{idNumber}
+// async function verifyNIN(nin: string, token: string) {
+//   const response = await axios.post(`https://api.qoreid.com/v1/ng/identities/nin/${nin}`, {
+//     firstname: "Bunch",
+//     lastname: "Dillon"
+//   }, {headers : {Authorization: `Bearer ${token}`, "Accept": "application/json",}})
+//   .then(res => { console.log("res", response)
+//     return res.data;
+//   })
+//   .catch(err => {
+//     console.log("fff", err?.response?.data);
+    
+//   })
+  
+// }
+
+// const options1 = {
+//   method: 'POST',
+//   url: 'https://api.qoreid.com/token',
+//   headers: {accept: 'text/plain', 'content-type': 'application/json'}
+// };
+// async function login() {
+//   const response = await axios.post(`https://api.qoreid.com/token`, {
+//     clientId: "TVXGM80NKA9SGF52LTO3",
+//     secret: "2b3e385a24644c2baf7f4393fdde2223"
+//   });
+//   return response.data;
+// }
+
 
 const upload = multer({ storage });
 
@@ -146,6 +178,13 @@ userRouter
 })
 .put("/update-profile", authentication, async (req: Request, res: Response) => {
     const { nin, area, phone_number } = req.body;
+    // console.log("NNNNN", nin);
+    
+    // const response = await login()
+    // // console.log("res", response);accessToken
+    // const resp = await verifyNIN(nin, response.accessToken)
+    //  console.log("res", resp);
+    
 
     try {
         const user = (req as any).user;
