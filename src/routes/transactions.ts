@@ -191,6 +191,149 @@ transactionRouter.get('/deposit/verify/:reference', authentication, async (req, 
   }
 });
 
+/* -------------------- SUBSCRIPTIONS -------------------- */
+
+const PAYSTACK_BASIC_PLAN = process.env.PAYSTACK_BASIC_PLAN as string;
+const PAYSTACK_PREMIUM_PLAN = process.env.PAYSTACK_PREMIUM_PLAN as string;
+
+
+/* -------------------- INITIALIZE SUBSCRIPTION -------------------- */
+transactionRouter.post("/subscribe", authentication, async (req, res) => {
+  const { planType } = req.body; // "basic" or "premium"
+  const user = (req as any).user;
+
+  try {
+    const planCode =
+      planType === "premium" ? PAYSTACK_PREMIUM_PLAN : PAYSTACK_BASIC_PLAN;
+
+    if (!planCode)
+      return res.status(400).json({ message: "Invalid plan selected" });
+
+    const amount = planType === "premium" ? 1500 * 100 : 1000 * 100;
+
+    // Initialize Paystack transaction
+    const response = await axios.post(
+      `${PAYSTACK_BASE_URL}/transaction/initialize`,
+      {
+        email: user.email,
+        amount,
+        plan: planCode,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const data = response.data.data;
+
+    res.status(200).json({
+      authorization_url: data.authorization_url,
+      access_code: data.access_code,
+      reference: data.reference,
+      planType,
+    });
+  } catch (error: any) {
+    console.error("Subscription init error:", error.response?.data || error);
+    res
+      .status(400)
+      .json({ message: error.response?.data?.message || error.message });
+  }
+});
+
+/* -------------------- VERIFY SUBSCRIPTION -------------------- */
+transactionRouter.get(
+  "/subscribe/verify/:reference",
+  authentication,
+  async (req, res) => {
+    const { reference } = req.params;
+    const user = (req as any).user;
+
+    try {
+      const verifyResponse = await verifyPayment(reference);
+      const data = verifyResponse.data;
+
+      if (data.status !== "success") {
+        return res.status(400).json({ message: "Subscription not successful" });
+      }
+
+      // Safely extract plan info
+      const planName = `${data.plan_object?.name} Plan` || "Basic Plan";
+      const amount = (data.amount || 0) / 100;
+
+      const existingUser = await User.findById(user._id);
+      let referralCode = existingUser?.referral_code;
+
+      if (!referralCode) {
+        referralCode = `REF-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+      }
+
+      await User.findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            "subscription.plan_name": planName,
+            "subscription.amount": amount,
+            "subscription.reference": reference,
+            "subscription.active": true,
+            "subscription.start_date": new Date(),
+            "subscription.renewed_at": new Date(),
+            referral_code: referralCode, 
+            is_recommended: true,
+          },
+        },
+        { new: true }
+      );
+
+      // Create a notification for user
+      await Notification.create({
+        title: "Subscription Activated",
+        description: `You are now subscribed to the ${planName} plan.`,
+        user_id: user._id,
+      });
+
+      res.status(200).json({
+        message: "Subscription verified and activated successfully",
+        plan: planName,
+      });
+    } catch (error: any) {
+      console.error("Subscription verification error:", error.response?.data || error);
+      res.status(400).json({ message: error.response?.data?.message || error.message });
+    }
+  }
+);
+
+/* -------------------- GET USER SUBSCRIPTION -------------------- */
+transactionRouter.get('/subscription', authentication, async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    const foundUser = await User.findById(user._id).select('subscription first_name last_name email');
+
+    if (!foundUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!foundUser.subscription || !foundUser.subscription.active) {
+      return res.status(200).json({
+        active: false,
+        message: 'No active subscription found',
+        subscription: null,
+      });
+    }
+
+    res.status(200).json({
+      active: true,
+      subscription: foundUser.subscription,
+    });
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+
 /* -------------------- PAYSTACK WEBHOOK -------------------- */
 transactionRouter.post(
   '/paystack/webhook',
@@ -238,6 +381,47 @@ transactionRouter.post(
     res.sendStatus(200);
   }
 );
+/* -------------------- SUBSCRIPTION WEBHOOK -------------------- */
+transactionRouter.post(
+  '/paystack/subscription-webhook',
+  express.json({ type: '*/*' }),
+  async (req, res) => {
+    const hash = crypto
+      .createHmac('sha512', PAYSTACK_SECRET)
+      .update(JSON.stringify(req.body))
+      .digest('hex');
+
+    if (hash !== req.headers['x-paystack-signature']) {
+      return res.status(401).json({ message: 'Invalid signature' });
+    }
+
+    const event = req.body;
+
+    if (event.event === 'subscription.create' || event.event === 'invoice.create') {
+      const { customer, plan, amount } = event.data;
+      const user = await User.findOne({ email: customer.email });
+
+      if (user) {
+        await User.findByIdAndUpdate(user._id, {
+          subscription: {
+            plan_name: plan.name,
+            amount: amount / 100,
+            active: true,
+            renewed_at: new Date(),
+          },
+        });
+
+        await Notification.create({
+          title: 'Subscription Renewed',
+          description: `Your ${plan.name} plan has been renewed.`,
+          user_id: user._id,
+        });
+      }
+    }
+
+    res.sendStatus(200);
+  }
+);
 
 /* -------------------- WITHDRAW -------------------- */
 transactionRouter.post('/withdraw', authentication, async (req, res) => {
@@ -263,5 +447,7 @@ transactionRouter.post('/withdraw', authentication, async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 });
+
+
 
 export default transactionRouter;

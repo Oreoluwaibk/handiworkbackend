@@ -57,26 +57,35 @@ vendorRouter
       res.status(500).json({message: `Unable to get vendors: ${error.message}`});
    }
 })
-.get("/recommended", async (req: Request, res: Response) => {
-   const { authorization } = req.headers;
-   const verify = verifyToken(authorization);
-   if(!verify.valid) {
-      res.status(401).send("Token not valid");
-      return;
-   }
-
+.get(
+  "/recommended",
+  authentication,
+  async (req: Request, res: Response) => {
     try {
-      const allvendors = await User.find({ is_vendor: true, is_recommended: true });
-      if(allvendors) {
-         res.status(200).json({
-            allvendors,
-            message: "Success"
-         })
-      } else res.status(400).send("No vendor found!")
-   } catch (error: any) {
-      res.status(500).json({message: `Unable to get vendors - ${error}`})
-   } 
-})
+      const vendors = await User.find({
+        is_vendor: true,
+        "subscription.active": true,
+        is_recommended: true, 
+      })
+        .select("first_name last_name email picture skill area subscription country state work_images chat_id phone_number")
+        .lean();
+
+      if (!vendors.length) {
+        return res.status(200).json({
+          message: "No recommended vendors available.",
+          vendors: [],
+        });
+      }
+
+      res.status(200).json({
+        message: "Recommended vendors retrieved successfully",
+        vendors,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+)
 .get("/all", async (req: Request, res: Response) => {
    const { authorization } = req.headers;
    const verify = verifyToken(authorization);

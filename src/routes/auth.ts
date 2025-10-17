@@ -5,59 +5,101 @@ import { createToken, generateOtp, resetToken, verifyToken } from "../utils/toke
 import bcryptjs from "bcryptjs";
 import { sendOtp } from "../utils/email";
 import { v4 as uuidv4 } from 'uuid';
+import Transaction from "../schema/transactionSchema";
+import Notification from "../schema/notificationScheme";
 
 const salt = 10;
 const authRouter = Router();
 
 authRouter
 .post("/register", async (req: Request, res: Response) => {
-    try {
-        const { first_name, last_name, email, password } = req.body;
-        const isUser = await User.findOne({ email });
+  try {
+    const { first_name, last_name, email, password, referred_by } = req.body;
 
-        if(isUser) {
-            res
-            .status(400)
-            .json({message: "user already exist, kindly login to continue"})
-            return;
-        }
-
-        const hashedPassword = bcryptjs.hashSync(password, salt);
-        const userDetails = {
-            first_name, 
-            last_name, 
-            email
-        };
-
-        const token = createToken(userDetails);
-        const chat_id = uuidv4();
-        const user = await User.create({
-            ...req.body,
-            password: hashedPassword,
-            picture: null,
-            chat_id
-        });
-        const wallet = new Wallet({
-            user_id: user._id,
-            currency_code: "NGN",
-            balance: 0,
-            is_active: true
-        });
-        await wallet.save();
-        await user.save();
-        
-        res.status(200).json({
-            token,
-            message: "Registration successfully",
-            user
-        })
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: `unable to create user, ${error}`
-        })
+    // 🔹 Check if user already exists
+    const isUser = await User.findOne({ email });
+    if (isUser) {
+      return res
+        .status(400)
+        .json({ message: "User already exists, kindly login to continue" });
     }
 
+    const salt = bcryptjs.genSaltSync(10);
+    const hashedPassword = bcryptjs.hashSync(password, salt);
+
+    let validReferrer: any | null = null;
+    if (referred_by) {
+      validReferrer = await User.findOne({ referral_code: referred_by });
+      if (!validReferrer) {
+        return res.status(400).json({ message: "Invalid referral code" });
+      }
+    }
+
+    // 🔹 Create new user (no referral_code yet)
+    const chat_id = uuidv4();
+    const user = await User.create({
+      ...req.body,
+      password: hashedPassword,
+      picture: null,
+      chat_id,
+      referred_by: validReferrer ? validReferrer.referral_code : null,
+      referral_code: null, // No referral code yet until subscription
+    });
+
+    // 🔹 Create wallet for new user
+    const wallet = new Wallet({
+      user_id: user._id,
+      currency_code: "NGN",
+      balance: 0,
+      is_active: true,
+    });
+    await wallet.save();
+
+    // 🔹 Reward referrer ₦1000 if referral code was valid
+    if (validReferrer) {
+      const referrerWallet = await Wallet.findOne({ user_id: validReferrer._id });
+
+      if (referrerWallet) {
+        referrerWallet.balance += 1000; // 💰 Add ₦1000 reward
+        await referrerWallet.save();
+
+        // Record transaction
+        await Transaction.create({
+          user_id: validReferrer._id,
+          type: "credit",
+          amount: 500,
+          description: `Referral reward for inviting ${first_name} ${last_name}`,
+          status: "completed",
+        });
+
+        // Create notification
+        await Notification.create({
+          title: "Referral Bonus Earned 🎉",
+          description: `₦1000 has been added to your wallet for referring ${first_name} ${last_name}.`,
+          user_id: validReferrer._id,
+        });
+      }
+    }
+
+    const token = createToken({
+      first_name,
+      last_name,
+      email,
+      _id: user._id,
+    });
+
+    res.status(200).json({
+      token,
+      message: "Registration successful",
+      user,
+    });
+  } catch (error: any) {
+    console.error("Registration error:", error);
+    res.status(500).json({
+      success: false,
+      message: `Unable to create user: ${error.message}`,
+    });
+  }
 })
 .post("/login", async(req: Request, res: Response) => {
     const { email, password } = req.body;
