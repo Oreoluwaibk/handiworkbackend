@@ -21,11 +21,15 @@ export async function processTransaction({
   type,
   amount,
   description,
+  status = "completed",
+  reference
 }: {
   user_id: string | any;
-  type: 'deposit' | 'withdraw';
+  type: 'deposit' | 'withdraw' | 'debit';
   amount: number;
   description?: string;
+  status?: string;
+  reference?: string;
 }) {
   const wallet = await Wallet.findOne({ user_id });
   if (!wallet || !wallet.is_active) throw new Error('Wallet not available');
@@ -39,8 +43,9 @@ export async function processTransaction({
     type,
     amount,
     description:
-      description || (type === 'deposit' ? 'Wallet deposit' : 'Wallet withdrawal'),
-    status: 'completed',
+    description || (type === 'deposit' ? 'Wallet deposit' : 'Wallet withdrawal'),
+    status,
+    reference
   });
 
   if (type === 'deposit') {
@@ -105,7 +110,6 @@ transactionRouter.post('/create', authentication, async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 });
-
 // Get all transactions
 transactionRouter.get('/', authentication, async (req, res) => {
   const user = (req as any).user;
@@ -172,6 +176,9 @@ transactionRouter.get('/deposit/verify/:reference', authentication, async (req, 
 
   try {
     const verifyResponse = await verifyPayment(reference);
+
+    console.log("beryty response", verifyResponse.data);
+    
 
     if (verifyResponse.data.status !== 'success') {
       return res.status(400).json({ message: 'Payment not successful' });
@@ -383,68 +390,246 @@ transactionRouter.post(
 );
 /* -------------------- SUBSCRIPTION WEBHOOK -------------------- */
 transactionRouter.post(
-  '/paystack/subscription-webhook',
-  express.json({ type: '*/*' }),
+  "/paystack/webhook",
+  express.json({ type: "*/*" }),
   async (req, res) => {
-    const hash = crypto
-      .createHmac('sha512', PAYSTACK_SECRET)
-      .update(JSON.stringify(req.body))
-      .digest('hex');
+    try {
+      // ✅ Verify Paystack signature
+      const hash = crypto
+        .createHmac("sha512", PAYSTACK_SECRET)
+        .update(JSON.stringify(req.body))
+        .digest("hex");
 
-    if (hash !== req.headers['x-paystack-signature']) {
-      return res.status(401).json({ message: 'Invalid signature' });
-    }
-
-    const event = req.body;
-
-    if (event.event === 'subscription.create' || event.event === 'invoice.create') {
-      const { customer, plan, amount } = event.data;
-      const user = await User.findOne({ email: customer.email });
-
-      if (user) {
-        await User.findByIdAndUpdate(user._id, {
-          subscription: {
-            plan_name: plan.name,
-            amount: amount / 100,
-            active: true,
-            renewed_at: new Date(),
-          },
-        });
-
-        await Notification.create({
-          title: 'Subscription Renewed',
-          description: `Your ${plan.name} plan has been renewed.`,
-          user_id: user._id,
-        });
+      if (hash !== req.headers["x-paystack-signature"]) {
+        return res.status(401).json({ message: "Invalid signature" });
       }
-    }
 
-    res.sendStatus(200);
+      const event = req.body;
+
+      // ✅ Handle subscription creation or renewal
+      if (
+        event.event === "subscription.create" ||
+        event.event === "invoice.create"
+      ) {
+        const { customer, plan, amount } = event.data;
+        const user = await User.findOne({ email: customer.email });
+
+        if (user) {
+          await User.findByIdAndUpdate(user._id, {
+            $set: {
+              "subscription.plan_name": plan.name,
+              "subscription.amount": amount / 100,
+              "subscription.active": true,
+              "subscription.renewed_at": new Date(),
+            },
+          });
+
+          await Notification.create({
+            title: "Subscription Renewed",
+            description: `Your ${plan.name} plan has been renewed.`,
+            user_id: user._id,
+          });
+        }
+      }
+
+      // ✅ Handle successful withdrawal (Paystack event: transfer.success)
+      if (event.event === "transfer.success") {
+        const { reference, recipient, amount } = event.data;
+
+        // Find the transaction record
+        const transaction = await Transaction.findOne({ reference });
+        if (transaction) {
+          transaction.status = "completed";
+          await transaction.save();
+        }
+
+        // Find wallet & notify user
+        const user = await User.findOne({
+          "bank_details.recipient_code": recipient.recipient_code,
+        });
+
+        if (user) {
+          await Notification.create({
+            title: "Withdrawal Successful",
+            description: `₦${amount / 100} has been successfully transferred to your account.`,
+            user_id: user._id,
+          });
+        }
+      }
+
+      // ✅ Handle failed withdrawal (Paystack event: transfer.failed)
+      if (event.event === "transfer.failed") {
+        const { reference, reason, recipient } = event.data;
+
+        const transaction = await Transaction.findOne({ reference });
+        if (transaction) {
+          transaction.status = "failed";
+          await transaction.save();
+
+          // Refund the user’s wallet balance
+          const wallet = await Wallet.findOne({ user_id: transaction.user_id });
+          if (wallet) {
+            wallet.balance += transaction.amount;
+            await wallet.save();
+          }
+
+          // Notify the user
+          await Notification.create({
+            title: "Withdrawal Failed",
+            description: `Your withdrawal of ₦${transaction.amount} failed: ${reason}. The amount has been refunded to your wallet.`,
+            user_id: transaction.user_id,
+          });
+        }
+      }
+
+      res.sendStatus(200);
+    } catch (error: any) {
+      console.error("Paystack webhook error:", error.message);
+      res.status(500).json({ message: "Webhook handling failed", error: error.message });
+    }
   }
 );
 
 /* -------------------- WITHDRAW -------------------- */
-transactionRouter.post('/withdraw', authentication, async (req, res) => {
-  const { password, amount, description } = req.body;
-  const user = (req as any).user;
-  const user_id = user._id;
-  try {
-    const user = await User.findById(user_id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+// transactionRouter.post('/withdraw', authentication, async (req, res) => {
+//   const { password, amount, description } = req.body;
+//   const user = (req as any).user;
+//   const user_id = user._id;
+//   try {
+//     const user = await User.findById(user_id);
+//     if (!user) return res.status(404).json({ message: 'User not found' });
 
+//     const isValid = await bcrypt.compare(password, user.password);
+//     if (!isValid) return res.status(401).json({ message: 'Invalid password' });
+
+//     const transaction = await processTransaction({
+//       user_id,
+//       type: 'withdraw',
+//       amount: parseFloat(amount),
+//       description,
+//     });
+
+//     res.status(200).json(transaction);
+//   } catch (error: any) {
+//     res.status(400).json({ message: error.message });
+//   }
+// });
+transactionRouter.post("/admin/reset-wallets", async (req, res) => {
+  try {
+    // Optional: you can add a secret key check or admin auth here
+    
+    const { confirm_key, clear_transactions } = req.body;
+    
+    if (confirm_key !== process.env.ADMIN_RESET_KEY as string) {
+      res.status(401).json({ message: "Unauthorized request" });
+      return;
+    }
+
+    // Reset all wallet balances to 0
+    await Wallet.updateMany({}, { $set: { balance: 0 } });
+
+    // Optional: clear all transactions if requested
+    if (clear_transactions) {
+      await Transaction.deleteMany({});
+    }
+
+    res.status(200).json({
+      message: `All wallet balances have been reset to 0${
+        clear_transactions ? " and all transactions cleared" : ""
+      }.`,
+    });
+    return;
+  } catch (error: any) {
+    console.error("Reset wallets error:", error.message);
+    res.status(500).json({
+      message: "Failed to reset wallets",
+      error: error.message,
+    });
+  }
+});
+
+transactionRouter.post("/withdraw", authentication, async (req, res) => {
+  const user = (req as any).user;
+  const { account_number, bank_code, amount, account_name, password  } = req.body;
+
+  try {
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) return res.status(401).json({ message: 'Invalid password' });
+    // Ensure amount is a number
+    const withdrawalAmount = Number(amount);
 
+    if (withdrawalAmount <= 0) {
+      return res.status(400).json({ message: "Invalid withdrawal amount" });
+    }
+
+    // Find user's wallet
+    const wallet = await Wallet.findOne({ user_id: user._id });
+    if (!wallet) return res.status(404).json({ message: "Wallet not found" });
+
+    if (wallet.balance < withdrawalAmount) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    // Step 1: Create transfer recipient
+    const recipientResponse = await axios.post(
+      "https://api.paystack.co/transferrecipient",
+      {
+        type: "nuban",
+        name: account_name,
+        account_number,
+        bank_code,
+        currency: "NGN",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const recipientCode = recipientResponse.data.data.recipient_code;
+
+    // Step 2: Initiate transfer
+    const transferResponse = await axios.post(
+      "https://api.paystack.co/transfer",
+      {
+        source: "balance",
+        amount: withdrawalAmount * 100, // convert to kobo
+        recipient: recipientCode,
+        reason: "Wallet withdrawal",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Step 3: Deduct amount from wallet immediately (optional — depends on trust)
+    wallet.balance -= withdrawalAmount;
+    await wallet.save();
+
+    // Step 4: Record transaction
     const transaction = await processTransaction({
-      user_id,
-      type: 'withdraw',
-      amount: parseFloat(amount),
-      description,
+      user_id: user._id,
+      type: "debit",
+      amount: withdrawalAmount,
+      description: "Wallet withdrawal to bank account",
+      status: "pending",
+      reference: transferResponse.data.data.reference,
     });
 
-    res.status(200).json(transaction);
+    res.status(200).json({
+      message: "Withdrawal initiated successfully",
+      transfer: transferResponse.data.data,
+    });
   } catch (error: any) {
-    res.status(400).json({ message: error.message });
+    console.error("Withdrawal error:", error.response?.data || error.message);
+    res.status(400).json({
+      message: error.response?.data?.message || error.message,
+    });
   }
 });
 

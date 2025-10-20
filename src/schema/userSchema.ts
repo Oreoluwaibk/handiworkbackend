@@ -37,6 +37,14 @@ interface IUser {
     start_date?: Date;
     renewed_at?: Date;
   };
+  bank_details: {
+    account_name: { type: String },
+    account_number: { type: String },
+    bank_code: { type: String },
+    bank_name: { type: String },
+    recipient_code: { type: String }, // Paystack recipient_code (important!)
+    verified: { type: Boolean, default: false },
+  }
 }
 
 const userSchema = new Schema<IUser>(
@@ -76,6 +84,14 @@ const userSchema = new Schema<IUser>(
       start_date: { type: Date, default: null },
       renewed_at: { type: Date, default: null },
     },
+    bank_details: {
+      account_name: { type: String, default: null },
+      account_number: { type: String, default: null },
+      bank_code: { type: String, default: null },
+      bank_name: { type: String, default: null },
+      recipient_code: { type: String, default: null }, // Paystack recipient_code (important!)
+      verified: { type: Boolean, default: false },
+    }
   },
   { timestamps: true }
 );

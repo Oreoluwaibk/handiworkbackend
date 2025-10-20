@@ -12,7 +12,7 @@ import messageRouter from "./message"
 import uploadRouter from "./upload";
 import walletRouter from "./wallet";
 import transactionRouter from "./transactions";
-
+import bankRouter from "./bank";
 const router = Router();
 
 router.use("/auth", authRouter);
@@ -28,5 +28,6 @@ router.use("/messages", messageRouter);
 router.use('/upload', uploadRouter);
 router.use('/wallet', walletRouter);
 router.use('/transactions', transactionRouter);
+router.use('/bank', bankRouter);
 
 export default router;
