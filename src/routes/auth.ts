@@ -60,7 +60,7 @@ authRouter
       const referrerWallet = await Wallet.findOne({ user_id: validReferrer._id });
 
       if (referrerWallet) {
-        referrerWallet.balance += 1000; // 💰 Add ₦1000 reward
+        referrerWallet.balance += 500; // 💰 Add ₦1000 reward
         await referrerWallet.save();
 
         // Record transaction
@@ -75,7 +75,7 @@ authRouter
         // Create notification
         await Notification.create({
           title: "Referral Bonus Earned 🎉",
-          description: `₦1000 has been added to your wallet for referring ${first_name} ${last_name}.`,
+          description: `₦500 has been added to your wallet for referring ${first_name} ${last_name}.`,
           user_id: validReferrer._id,
         });
       }

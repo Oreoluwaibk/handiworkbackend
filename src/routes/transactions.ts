@@ -177,9 +177,6 @@ transactionRouter.get('/deposit/verify/:reference', authentication, async (req, 
   try {
     const verifyResponse = await verifyPayment(reference);
 
-    console.log("beryty response", verifyResponse.data);
-    
-
     if (verifyResponse.data.status !== 'success') {
       return res.status(400).json({ message: 'Payment not successful' });
     }
@@ -339,7 +336,6 @@ transactionRouter.get('/subscription', authentication, async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 });
-
 
 /* -------------------- PAYSTACK WEBHOOK -------------------- */
 transactionRouter.post(
