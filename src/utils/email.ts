@@ -95,5 +95,16 @@ export async function sendOtp(userEmail: string, otp: string | number, userName:
     }
 }
 
+export const sendArtisanRequestEmail = async (data: any) => {
+  const mailOptions = {
+    from: process.env.SMTP_USER,
+    to: process.env.NOTIFICATION_EMAIL, // your team email
+    subject: "New Artisan Request",
+    template: "artisanRequest",
+    context: data
+  };
+  await transporter.sendMail(mailOptions);
+};
+
 
 

@@ -11,8 +11,7 @@ messageRouter
 .get("/chats", authentication, async (req: Request, res: Response) => {
   const user = (req as any).user;
   const chatId = user.chat_id;
-
-  console.log("chat", chatId);
+  
   try {
     const inbox = await Message.aggregate([
       {

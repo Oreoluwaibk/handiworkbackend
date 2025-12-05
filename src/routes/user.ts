@@ -100,7 +100,7 @@ userRouter
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 })
-.post("/upload-work", authentication, upload.array('images', 5), async (req: Request, res: Response) => {
+.post("/upload-work", authentication, upload.array('images', 8), async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
 
@@ -111,7 +111,7 @@ userRouter
         }
 
         // Additional server-side check: Max 5 files
-        if (req.files.length > 5) {
+        if (req.files.length > 8) {
             res.status(400).json({ message: 'You can only upload a maximum of 5 images.' });
             return;
         }

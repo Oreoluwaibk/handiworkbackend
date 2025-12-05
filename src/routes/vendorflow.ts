@@ -4,6 +4,8 @@ import { verifyToken } from "../utils/tokens";
 import { authentication } from "../middleware/authentication";
 import { getPagination } from "../utils/pagination";
 import Skill from "../schema/skillsSchema";
+import ArtisanRequest from "../schema/artisanRequest";
+import { sendArtisanRequestEmail } from "../utils/email";
 
 const vendorRouter = Router();
 
@@ -127,5 +129,45 @@ vendorRouter
       message: "Success"
    })
 })
+.post("/request", authentication, async (req: Request, res: Response) => {
+   try {
+      const { name, email, phone, address, problem, title } = req.body;
+
+      if (!name || !email || !phone || !address || !problem) {
+         return res.status(400).json({
+            success: false,
+            message: "All fields are required"
+         });
+      }
+
+      // Save to DB
+      const artisanRequest = await ArtisanRequest.create({
+         name,
+         email,
+         phone,
+         address,
+         problem,
+         title
+      });
+
+      // Send email
+      await sendArtisanRequestEmail({
+         ...artisanRequest.toObject(),
+         createdAt: artisanRequest.createdAt?.toLocaleString()
+      });
+
+      return res.status(201).json({
+         success: true,
+         message: "Artisan request submitted successfully"
+      });
+
+   } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+         success: false,
+         message: `Unable to submit artisan request: ${error}`
+      });
+   }
+});
 
 export default vendorRouter;

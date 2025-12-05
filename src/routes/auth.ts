@@ -24,80 +24,73 @@ authRouter
         .json({ message: "User already exists, kindly login to continue" });
     }
 
-    const salt = bcryptjs.genSaltSync(10);
-    const hashedPassword = bcryptjs.hashSync(password, salt);
-
+    // 🔹 Validate referral code (ONLY super vendor with active subscription)
     let validReferrer: any | null = null;
     if (referred_by) {
-      validReferrer = await User.findOne({ referral_code: referred_by });
+      validReferrer = await User.findOne({
+        referral_code: referred_by,
+        is_vendor: true,
+        "subscription.active": true
+      });
+
       if (!validReferrer) {
         return res.status(400).json({ message: "Invalid referral code" });
       }
     }
 
-    // 🔹 Create new user (no referral_code yet)
+    const salt = bcryptjs.genSaltSync(10);
+    const hashedPassword = bcryptjs.hashSync(password, salt);
+
     const chat_id = uuidv4();
+
+    // 🔹 Create new user (NO referral code yet)
     const user = await User.create({
       ...req.body,
       password: hashedPassword,
       picture: null,
       chat_id,
+
+      referral_code: null, // Generated only after subscription
       referred_by: validReferrer ? validReferrer.referral_code : null,
-      referral_code: null, // No referral code yet until subscription
+
+      subscription: {
+        plan_name: null,
+        amount: 0,
+        active: false,
+        start_date: null,
+        renewed_at: null
+      }
     });
 
-    // 🔹 Create wallet for new user
+    // 🔹 Create wallet for user
     const wallet = new Wallet({
       user_id: user._id,
       currency_code: "NGN",
       balance: 0,
-      is_active: true,
+      is_active: true
     });
+
     await wallet.save();
-
-    // 🔹 Reward referrer ₦1000 if referral code was valid
-    if (validReferrer) {
-      const referrerWallet = await Wallet.findOne({ user_id: validReferrer._id });
-
-      if (referrerWallet) {
-        referrerWallet.balance += 500; // 💰 Add ₦1000 reward
-        await referrerWallet.save();
-
-        // Record transaction
-        await Transaction.create({
-          user_id: validReferrer._id,
-          type: "credit",
-          amount: 500,
-          description: `Referral reward for inviting ${first_name} ${last_name}`,
-          status: "completed",
-        });
-
-        // Create notification
-        await Notification.create({
-          title: "Referral Bonus Earned 🎉",
-          description: `₦500 has been added to your wallet for referring ${first_name} ${last_name}.`,
-          user_id: validReferrer._id,
-        });
-      }
-    }
 
     const token = createToken({
       first_name,
       last_name,
       email,
-      _id: user._id,
+      _id: user._id
     });
 
     res.status(200).json({
       token,
       message: "Registration successful",
-      user,
+      user
     });
+
   } catch (error: any) {
     console.error("Registration error:", error);
+
     res.status(500).json({
       success: false,
-      message: `Unable to create user: ${error.message}`,
+      message: `Unable to create user: ${error.message}`
     });
   }
 })

@@ -9,17 +9,24 @@ const categoryRouter = Router();
 categoryRouter
 .get("/", async (req: Request, res: Response) => {
     try {
-        const allcategory = await Category.find();
+        const allCategories = await Category.find()
+            .populate({
+                path: "skills",
+                select: "title description", // Only include these fields
+            })
+            .exec();
 
         res.status(200).json({
-            categories: allcategory,
-            message: "success"
-       })
+            success: true,
+            categories: allCategories,
+            message: "Categories fetched successfully"
+        });
     } catch (error) {
         res.status(500).json({
             success: false,
-            message: `unable to get categories, ${error}`
-        })
+            categories: [],
+            message: `Unable to get categories: ${error}`
+        });
     }
 })
 .get("/:id", async (req: Request, res: Response) => {
@@ -63,6 +70,36 @@ categoryRouter
             message: "success"
         })
     }
+})
+.post("/multiple", async (req: Request, res: Response) => {
+    const data = Array.isArray(req.body) ? req.body : [req.body];
+
+    const createdCategories: any[] = [];
+    const duplicates: any[] = [];
+
+    for (const item of data) {
+        const { title } = item;
+
+        const existing = await Category.findOne({ title });
+
+        if (existing) {
+            duplicates.push({
+                title,
+                message: "Category already exists"
+            });
+            continue;
+        }
+
+        const newCat = await Category.create(item);
+        await newCat.save();
+        createdCategories.push(newCat);
+    }
+
+    res.status(200).json({
+        created: createdCategories,
+        duplicates,
+        message: "Process complete"
+    });
 })
 .put("/:id", async(req: Request, res: Response) => {
     const { id } = req.params;
@@ -108,6 +145,57 @@ categoryRouter
         })
     }
 })
+.delete("/", async (req: Request, res: Response) => {
+    try {
+        const { id, ids } = req.body;
+
+        // DELETE ALL if no id(s) provided
+        if (!id && !ids) {
+            const result = await Category.deleteMany({});
+            return res.status(200).json({
+                success: true,
+                deletedCount: result.deletedCount,
+                message: "All categories deleted successfully"
+            });
+        }
+
+        // Normalize: convert single id → array
+        const list = ids || (id ? [id] : []);
+
+        const deleted: any[] = [];
+        const notFound: any[] = [];
+
+        for (const categoryId of list) {
+            const category = await Category.findById(categoryId);
+
+            if (!category) {
+                notFound.push({
+                    id: categoryId,
+                    message: "Category not found"
+                });
+                continue;
+            }
+
+            await category.deleteOne();
+            deleted.push(categoryId);
+        }
+
+        return res.status(200).json({
+            success: true,
+            deleted,
+            notFound,
+            message: "Delete operation completed"
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: `Unable to delete category(ies): ${error}`
+        });
+    }
+});
+
+
 
 
 export default categoryRouter;

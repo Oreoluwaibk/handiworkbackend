@@ -1,20 +1,19 @@
-
-import { Schema, model } from "mongoose";
-
+import { Schema, model, Types } from "mongoose";
+import Skill from "./skillsSchema";
+// import Skill from "./Skill"; // <-- Make sure this path is correct
 interface ICategory {
     title: string;
     description: string;
-    skills: string[];
-    image: string;
+    image?: string;
+    skills: Types.ObjectId[]; // Reference to Skill
 }
 
 const categorySchema = new Schema<ICategory>({
-    title: {required: true, type: String},
-    description: {required: false, type: String},
-    skills: {required: true, type: []},
-    image: {required: false, type: String, default: ""}
-}, { timestamps: true })
+    title: { type: String, required: true },
+    description: { type: String, required: false, default: "" },
+    image: { type: String, required: false, default: "" },
+    skills: [{ type: Schema.Types.ObjectId, ref: "skill" }] // <-- ref matches Skill model name
+}, { timestamps: true });
 
-export { categorySchema }
-const Category = model<ICategory>("category", categorySchema);
+const Category = model<ICategory>("Category", categorySchema);
 export default Category;

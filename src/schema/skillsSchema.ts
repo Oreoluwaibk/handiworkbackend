@@ -1,18 +1,19 @@
-
-import { Schema, model } from "mongoose";
+import { Schema, model, Types } from "mongoose";
 
 interface ISkill {
-    id: number;
-    description: string;
     title: string;
+    description?: string;
+    category: Types.ObjectId; // reference to Category
 }
 
 const skillSchema = new Schema<ISkill>({
-    id: {required: true, type: Number},
-    description: {required: false, type: String, default: ""},
-    title: {required: true, type: String}
-}, { timestamps: true })
+    title: { type: String, required: true },
+    description: { type: String, default: "" },
+    category: { type: Schema.Types.ObjectId, ref: "category", required: true }, // relation
+}, { timestamps: true });
 
-export { skillSchema }
+// Optional: auto-increment numeric id (requires mongoose-sequence)
+// Otherwise, ObjectId is used as unique identifier
+
 const Skill = model<ISkill>("skill", skillSchema);
 export default Skill;
