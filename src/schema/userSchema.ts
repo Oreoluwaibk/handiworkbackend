@@ -78,7 +78,7 @@ const userSchema = new Schema<IUser>(
     chat_id: { type: String, required: false, default: null },
     is_deleted: { type: Boolean, required: true, default: false },
     work_images: { required: false, type: [String], default: [] },
-    referral_code: { type: String, required: false, unique: true, sparse: true },
+    referral_code: { type: String, required: false, },
     referred_by: { type: String, required: false, default: null },
 
     // ✅ Subscription

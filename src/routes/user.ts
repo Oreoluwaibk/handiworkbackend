@@ -7,6 +7,7 @@ import fs from 'fs';
 import { authentication } from "../middleware/authentication";
 import cloudinary from "../utils/cloudinary";
 import axios from 'axios';
+import mongoose from "mongoose";
 
 const userRouter = Router();
 
@@ -100,57 +101,78 @@ userRouter
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 })
-.post("/upload-work", authentication, upload.array('images', 8), async (req: Request, res: Response) => {
+.post(
+  "/upload-work",
+  authentication,
+  upload.array("images", 8),
+  async (req: Request, res: Response) => {
     try {
-        const user = (req as any).user;
+      const user = (req as any).user;
 
-        // Check if files are uploaded
-        if (!req.files || !(req.files instanceof Array) || req.files.length === 0) {
-            res.status(400).json({ message: 'No files uploaded' });
-            return;
-        }
+      if (!req.files || !(req.files instanceof Array) || req.files.length === 0) {
+        return res.status(400).json({ message: "No files uploaded" });
+      }
 
-        // Additional server-side check: Max 5 files
-        if (req.files.length > 8) {
-            res.status(400).json({ message: 'You can only upload a maximum of 5 images.' });
-            return;
-        }
+      if (req.files.length > 8) {
+        return res
+          .status(400)
+          .json({ message: "You can only upload a maximum of 8 images." });
+      }
 
-        const uploadResults: { url: string, public_id: string }[] = [];
+      const uploadResults: { url: string; public_id: string }[] = [];
 
-        for (const file of req.files) {
-            const filePath = (file as Express.Multer.File).path;
+      // Upload new files
+      for (const file of req.files) {
+        const filePath = (file as Express.Multer.File).path;
 
-            const result = await cloudinary.uploader.upload(filePath, {
-                folder: 'handiwork_workdone'
-            });
-
-            uploadResults.push({
-                url: result.secure_url,
-                public_id: result.public_id
-            });
-
-            fs.unlinkSync(filePath); // Delete local file after upload
-        }
-
-        // Save the image URLs to user model (adjust this field as needed)
-        user.work_images = uploadResults.map(r => r.url);
-        await user.save();
-
-        res.status(200).json({
-            message: 'Work images uploaded successfully',
-            images: uploadResults.map(r => r.url)
+        const result = await cloudinary.uploader.upload(filePath, {
+          folder: "handiwork_workdone",
         });
 
+        uploadResults.push({
+          url: result.secure_url,
+          public_id: result.public_id,
+        });
+
+        fs.unlinkSync(filePath);
+      }
+
+      // User currently stored images
+      const currentImages = user.work_images || [];
+
+      let finalImages: string[] = [];
+
+      // CASE 1: New uploads <= current image count → append
+      if (uploadResults.length <= currentImages.length) {
+        finalImages = [...currentImages, ...uploadResults.map((r) => r.url)];
+
+        // Ensure max of 8 (optional safety)
+        finalImages = finalImages.slice(0, 8);
+      }
+
+      // CASE 2: New uploads > current image count → replace all
+      else {
+        finalImages = uploadResults.map((r) => r.url);
+      }
+
+      // Save final images
+      user.work_images = finalImages;
+      await user.save();
+
+      res.status(200).json({
+        message: "Work images updated successfully",
+        images: finalImages,
+      });
     } catch (error: any) {
-        console.error("Error uploading work images:", error);
-        res.status(500).json({
-            message: 'Server error',
-            error: error.message
-        });
+      console.error("Error uploading work images:", error);
+      res.status(500).json({
+        message: "Server error",
+        error: error.message,
+      });
     }
-})
-.get("/all", async (req: Request, res: Response) => {
+  }
+)
+.get("/all", authentication, async (req: Request, res: Response) => {
    const { authorization } = req.headers;
    const verify = verifyToken(authorization);
    if(!verify.valid) {
@@ -175,6 +197,24 @@ userRouter
             message: `Unable to get users - ${error.message || error.toString()}`,
         });
     }
+})
+.get("/emails", authentication, async (req: Request, res: Response) => {
+  try {
+    // Fetch only the email field
+    const emails = await User.find({}, { email: 1, _id: 0 });
+
+    return res.status(200).json({
+      message: "List of all user emails",
+      emails,
+    });
+  } catch (error: any) {
+    console.error("Error fetching user emails:", error);
+
+    return res.status(500).json({
+      message: "Unable to fetch user emails",
+      error: error.message,
+    });
+  }
 })
 .put("/update-profile", authentication, async (req: Request, res: Response) => {
     const { nin, area, phone_number } = req.body;
@@ -287,6 +327,61 @@ userRouter
         });
         return;
     }
+})
+.delete("/hard", authentication, async (req: Request, res: Response) => {
+    // const { email, is_active } = (req as any).user;
+    const { email } = req.body;
+
+    try {
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+
+        // if (is_active) {
+        //     return res.status(400).json({
+        //         message: "This vendor is currently active and has not completed current task!"
+        //     });
+        // }
+
+        // HARD DELETE - permanently remove user
+        await User.deleteOne({ email });
+
+        return res.status(200).json({
+            message: "User has been permanently deleted.",
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: `This user could not be deleted - ${error}`
+        });
+    }
+})
+.delete("/drop-referral-index", authentication, async (req: Request, res: Response) => {
+  try {
+    const collection = mongoose.connection.collection("users");
+
+    await collection.dropIndex("referral_code_1");
+
+    return res.status(200).json({
+      message: "Index 'referral_code_1' successfully dropped!",
+    });
+  } catch (error: any) {
+
+    // If index does not exist
+    if (error.code === 27) {
+      return res.status(200).json({
+        message: "Index does not exist or already removed.",
+      });
+    }
+
+    console.error("Drop index error:", error);
+    return res.status(500).json({
+      message: "Failed to drop referral_code index",
+      error: error.message
+    });
+  }
 });
 
 
