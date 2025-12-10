@@ -96,15 +96,28 @@ export async function sendOtp(userEmail: string, otp: string | number, userName:
 }
 
 export const sendArtisanRequestEmail = async (data: any) => {
-  const mailOptions = {
-    from: process.env.SMTP_USER,
-    to: process.env.NOTIFICATION_EMAIL, // your team email
-    subject: "New Artisan Request",
-    template: "artisanRequest",
-    context: data
-  };
-  await transporter.sendMail(mailOptions);
+  try {
+    // Load and compile template
+    const templatePath = path.resolve('./src/views/artisanRequest.handlebars');
+    const template = await fs.readFile(templatePath, 'utf-8');
+    const compiled = Handlebars.compile(template);
+    const html = compiled(data);
+
+    const msg = {
+      to: process.env.NOTIFICATION_EMAIL, // your team email
+      from: process.env.FROM_EMAIL as string,
+      subject: "New Artisan Request",
+      html,
+    };
+
+    await sgMail.send(msg);
+    console.log(`✅ Artisan request email sent to ${process.env.NOTIFICATION_EMAIL}`);
+  } catch (error) {
+    console.error("❌ Failed to send artisan request email:", error);
+    throw error;
+  }
 };
+
 
 
 
