@@ -109,8 +109,16 @@ quoteRouter
         const notification = await Notification.create({
             title: "Quote Accepted!",
             description: `Your quote price has been accepted by ${quote.requester.name}, Kindly proceed with project`,
-            user_id: vendor?._id
+            user_id: vendor?._id,
         });
+
+        await saveNotifcation(
+            `Your Quote is accepted`,
+            `Your quote from ${quote.vendor.name} has been accepted`,
+            vendor?._id!,
+            "quote",
+            quote.id
+        )
 
         await vendor?.save();
         await quote.save();
@@ -142,12 +150,20 @@ quoteRouter
             return;
         }
         quote.status = "declined";
-
         const notification = await Notification.create({
             title: "Quote Declined!",
             description: `Your quote price has been declined by ${quote.requester.name}`,
-            user_id: vendor?._id
+            user_id: vendor?._id,
         });
+
+        await saveNotifcation(
+            `Your Quote is declined`,
+            `Your quote from ${quote.vendor.name} has been declined`,
+            vendor?._id!,
+            "quote",
+            quote.id
+        )
+        
 
         await quote.save();
         await notification.save();
@@ -185,6 +201,22 @@ quoteRouter
             user_id: quote.vendor?.id
         });
 
+        await saveNotifcation(
+            `Your Quote is completed`,
+            `Your quote from ${quote.vendor.name} has been completed`,
+            quote.vendor?.id!,
+            "quote",
+            quote.id
+        )
+
+        await saveNotifcation(
+            `Your Quote is completed`,
+            `Your quote from ${quote.vendor.name} has been completed`,
+            quote.requester?.id!,
+            "quote",
+            quote.id
+        )
+
         await quote.save();
         
         await notification.save();
@@ -221,13 +253,17 @@ quoteRouter
         const notification = await Notification.create({
             title: "Quote verified!",
             description: `Your quote has been marked as verified by ${quote.vendor.name}`,
-            user_id: quote.requester?.id
+            user_id: quote.requester?.id,
+            type: "quote",
+            quote_id: id
         });
 
         const notification2 = await Notification.create({
             title: "Quote verified!",
             description: `Your quote has been marked as verified by ${quote.vendor.name}`,
-            user_id: quote.vendor?.id
+            user_id: quote.vendor?.id,
+            type: "quote",
+            quote_id: id
         });
 
         const transaction = await processTransaction({
@@ -264,9 +300,9 @@ quoteRouter
         const { limit, skip, page } = getPagination(req);
 
         const [quotes, total] = await Promise.all([
-            Quotes.find({"vendor.id": user._id})
-            .skip(skip)
-            .limit(limit),
+            Quotes.find({"vendor.id": user._id}),
+            // .skip(skip)
+            // .limit(limit),
             Quotes.countDocuments({"vendor.id": user._id}),
         ]);
 
@@ -321,7 +357,7 @@ quoteRouter
             res.status(400).json({message: "No vendor selected!"});
             return;
         }
-
+        
         const quote = await Quotes.create({
             title,
             description,
@@ -338,12 +374,15 @@ quoteRouter
             }
         });
 
-        const response = await saveNotifcation(
-            "You have a new quote request",
-            `You have a new quote from ${quote.requester.name}`,
-            vendorUser?._id
-        )
         await quote.save();
+        const response = await saveNotifcation(
+            `New Quote Request - ${title}`,
+            `You have a new quote from ${quote.requester.name} - ${description}`,
+            vendorUser?._id,
+            "quote",
+            quote.id
+        )
+        
 
         res.status(200).json({
             quote,
@@ -368,9 +407,11 @@ quoteRouter
         quote.status = "replied"
 
         const response = await saveNotifcation(
-            "Your quote has been replied",
-            `Your quote from ${quote.vendor.name} has been replied to`,
-            quote.requester.id
+            `Your Quote is Replied`,
+            `Your quote from ${quote.vendor.name} comment: ${comment}, Amount ${amount}`,
+            quote.requester.id,
+            "quote",
+            quote.id
         )
         await quote.save();
 

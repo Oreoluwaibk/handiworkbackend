@@ -51,6 +51,7 @@ interface IUser {
  // ✅ ADD THESE
   createdAt: Date;
   updatedAt: Date;
+  expo_push_tokens?: string[];
 }
 
 const userSchema = new Schema<IUser>(
@@ -99,6 +100,10 @@ const userSchema = new Schema<IUser>(
       bank_name: { type: String, default: null },
       recipient_code: { type: String, default: null },
       verified: { type: Boolean, default: false },
+    },
+    expo_push_tokens: {
+      type: [String],
+      default: [],
     },
   },
   { timestamps: true }

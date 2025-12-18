@@ -95,7 +95,7 @@ authRouter
   }
 })
 .post("/login", async(req: Request, res: Response) => {
-    const { email, password } = req.body;
+    const { email, password, expoPushToken  } = req.body;
     try {
         const user = await User.findOne({
             email: email
@@ -120,6 +120,12 @@ authRouter
         if(!isPasswordCorrect) {
             res.status(401).json({success: false, message: "Incorrect password!"});
             return;
+        }
+
+        if (expoPushToken) {
+          await User.findByIdAndUpdate(user._id, {
+            $addToSet: { expo_push_tokens: expoPushToken },
+          });
         }
 
         const userDetails = {
