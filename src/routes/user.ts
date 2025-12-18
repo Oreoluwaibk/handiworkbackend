@@ -216,6 +216,30 @@ userRouter
     });
   }
 })
+.get("/chat/:chatId", authentication, async (req: Request, res: Response) => {
+  const { chatId } = req.params;
+
+  try {
+     const user = await User.findOne({ chat_id: chatId }).select("first_name last_name phone_number email");
+
+    if (!user) {
+      return res.status(404).json({
+        message: `User with chat_id ${chatId} not found`,
+      });
+    }
+
+    return res.status(200).json({
+      message: "User found",
+      user,
+    });
+  } catch (error: any) {
+    console.error(`Error fetching user by chat_id ${chatId}:`, error);
+    return res.status(500).json({
+      message: "Unable to fetch user",
+      error: error.message,
+    });
+  }
+})
 .put("/update-profile", authentication, async (req: Request, res: Response) => {
     const { nin, area, phone_number } = req.body;
     // console.log("NNNNN", nin);
