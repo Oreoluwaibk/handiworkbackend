@@ -4,7 +4,7 @@ import { Schema, model, Types } from "mongoose";
 export interface ITransaction {
   wallet_id: Types.ObjectId;
   user_id: Types.ObjectId;
-  type: "deposit" | "withdraw" | "reverse";
+  type: "deposit" | "withdraw" | "reverse" | "debit";
   amount: number;
   status: "pending" | "completed" | "failed";
   reference?: string;
@@ -15,10 +15,10 @@ export interface ITransaction {
 const transactionSchema = new Schema<ITransaction>(
   {
     // wallet_id: { type: Schema.Types.ObjectId, ref: "Wallet", required: true },
-    type: { type: String, enum: ["deposit", "withdraw", "reverse"], required: true },
+    type: { type: String, enum: ["deposit", "withdraw", "reverse", "debit"], required: true },
     amount: { type: Number, required: true },
     status: { type: String, enum: ["pending", "completed", "failed"], required: true },
-    user_id: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    user_id: { type: Schema.Types.ObjectId, ref: "user", required: true },
     reference: String,
     description: String,
     meta: Schema.Types.Mixed,

@@ -10,7 +10,7 @@ export interface IWallet {
 
 const walletSchema = new Schema<IWallet>(
   {
-    user_id: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    user_id: { type: Schema.Types.ObjectId, ref: "user", required: true },
     currency_code: { type: String, required: true, default: "NGN" },
     balance: { type: Number, required: true, default: 0 },
     is_active: { type: Boolean, required: true, default: true },

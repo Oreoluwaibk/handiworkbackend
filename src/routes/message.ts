@@ -69,16 +69,22 @@ messageRouter
     res.status(500).json({ success: false, message: "Failed to fetch inbox" });
   }
 })
-.get("/:user1/:user2", async (req: Request, res: Response) => {
+.get("/:user1/:user2", authentication, async (req: Request, res: Response) => {
   const { user1, user2 } = req.params;
+  const user = (req as any).user;
+  const chatId = user.chat_id;
+
+  if (chatId !== user1 && chatId !== user2) {
+    return res.status(403).json({ message: "You can only view your own conversations" });
+  }
 
   try {
     const messages = await Message.find({
       $or: [
         { sender_id: user1, recipient_id: user2 },
-        { sender_id: user2, recipient_id: user1 }
-      ]
-    }).sort({ timestamp: 1 }); // oldest first
+        { sender_id: user2, recipient_id: user1 },
+      ],
+    }).sort({ createdAt: 1 });
 
     res.json(messages);
   } catch (error) {

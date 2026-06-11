@@ -3,6 +3,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import cloudinary from "../utils/cloudinary";
+import { authentication } from "../middleware/authentication";
 // import cloudinary from '../config/cloudinary';
 
 const uploadRouter = Router();
@@ -16,7 +17,11 @@ if (!fs.existsSync(uploadDir)) {
 
 export const uploadImage = async (req: Request, res: Response) => {
   try {
-    const filePath = req.file!.path;
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const filePath = req.file.path;
 
     const result = await cloudinary.uploader.upload(filePath, {
       folder: 'handiwork_uploads'
@@ -52,6 +57,7 @@ const upload = multer({ storage });
 uploadRouter
 .post(
   "/",
+  authentication,
   upload.single("file"),
   uploadImage
 );

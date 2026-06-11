@@ -132,9 +132,16 @@ userSchema.virtual("has_access").get(function () {
   return this.subscription?.active === true;
 });
 
-// 🔹 Make virtuals available in JSON responses
-userSchema.set("toJSON", { virtuals: true });
-userSchema.set("toObject", { virtuals: true });
+const stripSensitiveFields = (_doc: unknown, ret: any) => {
+  delete ret.password;
+  delete ret.resetToken;
+  delete ret.otp;
+  return ret;
+};
+
+// 🔹 Make virtuals available in JSON responses; never expose secrets
+userSchema.set("toJSON", { virtuals: true, transform: stripSensitiveFields });
+userSchema.set("toObject", { virtuals: true, transform: stripSensitiveFields });
 
 
 

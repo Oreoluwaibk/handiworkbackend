@@ -2,6 +2,8 @@ import { Request, Response, Router } from "express";
 import Skill from "../schema/skillsSchema";
 import Category from "../schema/categorySchema";
 import { Types } from "mongoose";
+import { authentication } from "../middleware/authentication";
+import { requireAdminKey } from "../middleware/adminAuth";
 
 
 const skillRouter = Router();
@@ -80,7 +82,7 @@ skillRouter
         });
     }
 })
-.post("/", async (req: Request, res: Response) => {
+.post("/", authentication, requireAdminKey, async (req: Request, res: Response) => {
     try {
         const payload = req.body;
 
@@ -133,7 +135,7 @@ skillRouter
         });
     }
 })
-.put("/:id", async(req: Request, res: Response) => {
+.put("/:id", authentication, requireAdminKey, async(req: Request, res: Response) => {
     const { id } = req.params;
     try {
         const skill = await Skill.findById({ _id: id });
@@ -157,7 +159,7 @@ skillRouter
         })
     }
 })
-.delete("/:id", async(req: Request, res: Response) => {
+.delete("/:id", authentication, requireAdminKey, async(req: Request, res: Response) => {
     const { id } = req.params;
     try {
         const skill = await Skill.findById({ _id: id });
@@ -177,7 +179,7 @@ skillRouter
         })
     }
 })
-.post("/multiple", async (req: Request, res: Response) => {
+.post("/multiple", authentication, requireAdminKey, async (req: Request, res: Response) => {
     try {
         const { skills } = req.body;
 
@@ -248,23 +250,20 @@ skillRouter
         });
     }
 })
-.delete("/", async (req: Request, res: Response) => {
+.delete("/", authentication, requireAdminKey, async (req: Request, res: Response) => {
     try {
-        const { ids } = req.body; 
-        
-        if (Array.isArray(ids) && ids.length > 0) {
-            const result = await Skill.deleteMany({ _id: { $in: ids } });
+        const { ids } = req.body;
 
-            return res.status(200).json({
-                message: "Selected skills deleted successfully",
-                deletedCount: result.deletedCount,
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({
+                message: "Provide an array of skill ids to delete",
             });
         }
 
-        const result = await Skill.deleteMany({});
+        const result = await Skill.deleteMany({ _id: { $in: ids } });
 
         return res.status(200).json({
-            message: "All skills deleted successfully",
+            message: "Selected skills deleted successfully",
             deletedCount: result.deletedCount,
         });
 

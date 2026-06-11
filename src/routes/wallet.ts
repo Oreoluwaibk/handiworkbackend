@@ -38,7 +38,7 @@ walletRouter.get('/stats', authentication, async (req, res) => {
       .reduce((acc, curr) => acc + Number(curr.amount), 0);
 
     const totalWithdrawals = transactions
-      .filter(t => t.type === 'withdraw')
+      .filter(t => t.type === 'withdraw' || t.type === 'debit')
       .reduce((acc, curr) => acc + Number(curr.amount), 0);
 
     res.status(200).json({

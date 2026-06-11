@@ -1,8 +1,7 @@
 import { Request, Response, Router } from "express";
 import Category from "../schema/categorySchema";
-
-
-const salt = 10;
+import { authentication } from "../middleware/authentication";
+import { requireAdminKey } from "../middleware/adminAuth";
 
 const categoryRouter = Router();
 
@@ -49,7 +48,7 @@ categoryRouter
         })
     }
 })
-.post("/", async(req: Request, res: Response) => {
+.post("/", authentication, requireAdminKey, async(req: Request, res: Response) => {
     const { title, description, skills} = req.body;
 
     const category = await Category.findOne({
@@ -71,7 +70,7 @@ categoryRouter
         })
     }
 })
-.post("/multiple", async (req: Request, res: Response) => {
+.post("/multiple", authentication, requireAdminKey, async (req: Request, res: Response) => {
     const data = Array.isArray(req.body) ? req.body : [req.body];
 
     const createdCategories: any[] = [];
@@ -101,7 +100,7 @@ categoryRouter
         message: "Process complete"
     });
 })
-.put("/:id", async(req: Request, res: Response) => {
+.put("/:id", authentication, requireAdminKey, async(req: Request, res: Response) => {
     const { id } = req.params;
     try {
         const category = await Category.findById({ _id: id });
@@ -125,7 +124,7 @@ categoryRouter
         })
     }
 })
-.delete("/:id", async(req: Request, res: Response) => {
+.delete("/:id", authentication, requireAdminKey, async(req: Request, res: Response) => {
     const { id } = req.params;
     try {
         const category = await Category.findById({ _id: id });
@@ -145,22 +144,18 @@ categoryRouter
         })
     }
 })
-.delete("/", async (req: Request, res: Response) => {
+.delete("/", authentication, requireAdminKey, async (req: Request, res: Response) => {
     try {
         const { id, ids } = req.body;
 
-        // DELETE ALL if no id(s) provided
-        if (!id && !ids) {
-            const result = await Category.deleteMany({});
-            return res.status(200).json({
-                success: true,
-                deletedCount: result.deletedCount,
-                message: "All categories deleted successfully"
+        const list = ids || (id ? [id] : []);
+
+        if (!list.length) {
+            return res.status(400).json({
+                success: false,
+                message: "Provide id or ids to delete",
             });
         }
-
-        // Normalize: convert single id → array
-        const list = ids || (id ? [id] : []);
 
         const deleted: any[] = [];
         const notFound: any[] = [];

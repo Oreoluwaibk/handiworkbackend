@@ -19,21 +19,24 @@ transporter = nodemailer.createTransport({
   },
 });
 
-// Setup handlebars
+const compiledViews = path.join(__dirname, '..', 'views');
+const sourceViews = path.join(__dirname, '..', '..', 'src', 'views');
+const viewsDir = fs.existsSync(compiledViews) ? compiledViews : sourceViews;
+
 transporter.use(
   'compile',
   hbs({
     viewEngine: {
-      partialsDir: path.resolve('./src/views/'),
+      partialsDir: viewsDir,
     },
-    viewPath: path.resolve('./src/views/'),
+    viewPath: viewsDir,
     extName: '.handlebars',
   })
 );
 
 // Define function to send welcome email
 export async function sendWelcomeEmail(userEmail: string, userName: string): Promise<void> {
-  const template = await fs.readFile('src/views/welcome.handlebars', 'utf-8');
+  const template = await fs.readFile(path.join(viewsDir, 'welcome.handlebars'), 'utf-8');
   const compiled = Handlebars.compile(template);
   const html = compiled({ name: userName,  });
 
@@ -75,7 +78,7 @@ export async function sendOtp(userEmail: string, otp: string | number, userName:
   //   throw error;
   // }
   
-   const template = await fs.readFile('src/views/otp.handlebars', 'utf-8');
+   const template = await fs.readFile(path.join(viewsDir, 'otp.handlebars'), 'utf-8');
     const compiled = Handlebars.compile(template);
     const html = compiled({ name: userName, otp: otp, appName: 'QuikWrk Admin' });
 
@@ -98,7 +101,7 @@ export async function sendOtp(userEmail: string, otp: string | number, userName:
 export const sendArtisanRequestEmail = async (data: any) => {
   try {
     // Load and compile template
-    const templatePath = path.resolve('./src/views/artisanRequest.handlebars');
+    const templatePath = path.join(viewsDir, 'artisanRequest.handlebars');
     const template = await fs.readFile(templatePath, 'utf-8');
     const compiled = Handlebars.compile(template);
     const html = compiled(data);

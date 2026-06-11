@@ -9,7 +9,7 @@ interface ISkill {
 const skillSchema = new Schema<ISkill>({
     title: { type: String, required: true },
     description: { type: String, default: "" },
-    category: { type: Schema.Types.ObjectId, ref: "category", required: true }, // relation
+    category: { type: Schema.Types.ObjectId, ref: "Category", required: true },
 }, { timestamps: true });
 
 // Optional: auto-increment numeric id (requires mongoose-sequence)

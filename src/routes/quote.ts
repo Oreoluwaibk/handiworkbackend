@@ -1,25 +1,22 @@
 import { Request, Response, Router } from "express";
 import { authentication } from "../middleware/authentication";
 import User from "../schema/userSchema";
-import Quotes, { IQuote } from "../schema/quoteSchema";
+import Quotes from "../schema/quoteSchema";
 import { getPagination } from "../utils/pagination";
-import Notification from "../schema/notificationScheme";
 import { saveNotifcation } from "../utils/saveNotification";
 import { processTransaction } from "./transactions";
 import mongoose from "mongoose";
 import Wallet from "../schema/walletSchema";
 
-
-interface QuoteWithChats extends IQuote {
-  requester_chat_id: string | null;
-  vendor_chat_id: string | null;
-}
-interface QuoteWithChats extends Document {
-  requester_chat_id: string | null;
-  vendor_chat_id: string | null;
-}
-
 const quoteRouter = Router();
+
+function isRequester(quote: any, user: any) {
+  return quote.requester?.id?.toString() === user._id.toString();
+}
+
+function isVendor(quote: any, user: any) {
+  return quote.vendor?.id?.toString() === user._id.toString();
+}
 
 quoteRouter
 .get("/", authentication, async (req: Request, res: Response) => {
@@ -39,23 +36,18 @@ quoteRouter
       Quotes.countDocuments(query),
     ]);
 
-    // Collect unique requester + vendor ids
     const userIds = [
-      ...new Set(quotes.flatMap(q => [q.requester.id, q.vendor.id]))
+      ...new Set(quotes.flatMap((q) => [q.requester.id, q.vendor.id])),
     ];
 
-    // Convert string ids to ObjectId
-    const objectIds = userIds.map(id => new mongoose.Types.ObjectId(id));
-
-    // Get chat_ids from Users schema
+    const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
     const users = await User.find({ _id: { $in: objectIds } }).select("chat_id");
     const userMap = users.reduce((map, u) => {
       map[u._id.toString()] = u.chat_id ?? null;
       return map;
     }, {} as Record<string, string | null>);
 
-    // Merge chat_ids into each quote
-    const responseQuotes: any[] = quotes.map(q => ({
+    const responseQuotes: any[] = quotes.map((q) => ({
       ...q.toObject(),
       requester_chat_id: userMap[q.requester.id] ?? null,
       vendor_chat_id: userMap[q.vendor.id] ?? null,
@@ -73,249 +65,251 @@ quoteRouter
   }
 })
 .put("/accept/:id", authentication, async (req: Request, res: Response) => {
-    const { id } = req.params;
-    
-    try {
-        const quote = await Quotes.findById(id);
+  const { id } = req.params;
+  const user = (req as any).user;
 
-        if(!quote) {
-            res.status(404).json({ message: "Quote not found!" });
-            return;
-        }
-        
-        const vendor = await User.findById(quote?.vendor.id);
-        if(!quote.amount) {
-            res.status(400).json({ message: "You cannot accept quote if not replied" });
-            return;
-        }
-        const wallet = await Wallet.findOne({ user_id: quote.requester.id });
-        if (!wallet)  {
-            res.status(404).json({ message: 'You cannot accept this quote if you have no money in your wallet!' });
-            return
-        }
+  try {
+    const quote = await Quotes.findById(id);
 
-        if(parseFloat(wallet.balance.toString()) < parseFloat(quote.amount.toString())) {
-            res.status(400).json({ message: 'You cannot accept quote more than your account balance!' });
-            return
-        }
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
 
-        quote.status = "accepted";
-        if(vendor && vendor.is_active) {
-            res.status(400).json({ message: "Vendor is currently occupied with another project, kindly wait or try another vendor" });
-            return;
-        }
-        if(vendor) vendor.is_active = true;
+    if (!isRequester(quote, user)) {
+      res.status(403).json({ message: "Only the requester can accept this quote" });
+      return;
+    }
 
-        const notification = await Notification.create({
-            title: "Quote Accepted!",
-            description: `Your quote price has been accepted by ${quote.requester.name}, Kindly proceed with project`,
-            user_id: vendor?._id,
-        });
+    const vendor = await User.findById(quote.vendor.id);
 
-        await saveNotifcation(
-            `Your Quote is accepted`,
-            `Your quote from ${quote.vendor.name} has been accepted`,
-            vendor?._id!,
-            "quote",
-            quote.id
-        )
+    if (!quote.amount) {
+      res.status(400).json({ message: "You cannot accept quote if not replied" });
+      return;
+    }
 
-        await vendor?.save();
-        await quote.save();
-        await notification.save();
-        
-        res.status(200).json({
-            message: "Quote has been accepted successfully!",
-            quote
-        });
-        
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get accept: ${error.message}`});
-    }  
+    const wallet = await Wallet.findOne({ user_id: quote.requester.id });
+    if (!wallet) {
+      res.status(404).json({ message: 'You cannot accept this quote if you have no money in your wallet!' });
+      return;
+    }
+
+    if (parseFloat(wallet.balance.toString()) < parseFloat(quote.amount.toString())) {
+      res.status(400).json({ message: 'You cannot accept quote more than your account balance!' });
+      return;
+    }
+
+    if (vendor?.is_active) {
+      res.status(400).json({
+        message: "Vendor is currently occupied with another project, kindly wait or try another vendor",
+      });
+      return;
+    }
+
+    quote.status = "accepted";
+    if (vendor) vendor.is_active = true;
+
+    await saveNotifcation(
+      "Your Quote is accepted",
+      `Your quote for ${quote.title} has been accepted by ${quote.requester.name}`,
+      vendor?._id!,
+      "quote",
+      quote.id
+    );
+
+    await vendor?.save();
+    await quote.save();
+
+    res.status(200).json({
+      message: "Quote has been accepted successfully!",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to accept quote: ${error.message}` });
+  }
 })
 .put("/decline/:id", authentication, async (req: Request, res: Response) => {
-    const { id } = req.params;
-    
-    try {
-        const quote = await Quotes.findById(id);
+  const { id } = req.params;
+  const user = (req as any).user;
 
-        if(!quote) {
-            res.status(404).json({ message: "Quote not found!" });
-            return;
-        }
-        
-        const vendor = await User.findById(quote?.vendor.id);
-        if(!quote.amount) {
-            res.status(400).json({ message: "You cannot decline quote if not replied" });
-            return;
-        }
-        quote.status = "declined";
-        const notification = await Notification.create({
-            title: "Quote Declined!",
-            description: `Your quote price has been declined by ${quote.requester.name}`,
-            user_id: vendor?._id,
-        });
+  try {
+    const quote = await Quotes.findById(id);
 
-        await saveNotifcation(
-            `Your Quote is declined`,
-            `Your quote from ${quote.vendor.name} has been declined`,
-            vendor?._id!,
-            "quote",
-            quote.id
-        )
-        
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
 
-        await quote.save();
-        await notification.save();
-        
-        res.status(200).json({
-            message: "Quote has been declined successfully",
-            quote
-        });
-        
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get accept: ${error.message}`});
-    }  
+    if (!isRequester(quote, user)) {
+      res.status(403).json({ message: "Only the requester can decline this quote" });
+      return;
+    }
+
+    const vendor = await User.findById(quote.vendor.id);
+
+    if (!quote.amount) {
+      res.status(400).json({ message: "You cannot decline quote if not replied" });
+      return;
+    }
+
+    quote.status = "declined";
+
+    await saveNotifcation(
+      "Your Quote is declined",
+      `Your quote for ${quote.title} has been declined by ${quote.requester.name}`,
+      vendor?._id!,
+      "quote",
+      quote.id
+    );
+
+    await quote.save();
+
+    res.status(200).json({
+      message: "Quote has been declined successfully",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to decline quote: ${error.message}` });
+  }
 })
 .put("/completetask/:id", authentication, async (req: Request, res: Response) => {
-    const { id } = req.params;
-    
-    try {
-        const quote = await Quotes.findById(id);
+  const { id } = req.params;
+  const user = (req as any).user;
 
-        if(!quote) {
-            res.status(404).json({ message: "Quote not found!" });
-            return;
-        }
-        
-        quote.status = "completed";
-        const notification = await Notification.create({
-            title: "Quote completed!",
-            description: `Your quote has been marked as completed by ${quote.vendor.name}`,
-            user_id: quote.requester?.id
-        });
+  try {
+    const quote = await Quotes.findById(id);
 
-        const notification2 = await Notification.create({
-            title: "Quote completed!",
-            description: `Your quote has been marked as completed by ${quote.vendor.name}`,
-            user_id: quote.vendor?.id
-        });
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
 
-        await saveNotifcation(
-            `Your Quote is completed`,
-            `Your quote from ${quote.vendor.name} has been completed`,
-            quote.vendor?.id!,
-            "quote",
-            quote.id
-        )
+    if (!isVendor(quote, user)) {
+      res.status(403).json({ message: "Only the vendor can mark this quote as completed" });
+      return;
+    }
 
-        await saveNotifcation(
-            `Your Quote is completed`,
-            `Your quote from ${quote.vendor.name} has been completed`,
-            quote.requester?.id!,
-            "quote",
-            quote.id
-        )
+    quote.status = "completed";
 
-        await quote.save();
-        
-        await notification.save();
-        await notification2.save();
-        
-        res.status(200).json({
-            message: "Quote has been completed successfully",
-            quote
-        });
-        
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get complete: ${error.message}`});
-    }  
+    await saveNotifcation(
+      "Your Quote is completed",
+      `Your quote for ${quote.title} has been marked completed by ${quote.vendor.name}`,
+      quote.requester?.id!,
+      "quote",
+      quote.id
+    );
+
+    await saveNotifcation(
+      "Your Quote is completed",
+      `You marked quote ${quote.title} as completed`,
+      quote.vendor?.id!,
+      "quote",
+      quote.id
+    );
+
+    await quote.save();
+
+    res.status(200).json({
+      message: "Quote has been completed successfully",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to complete quote: ${error.message}` });
+  }
 })
 .put("/verify/:id", authentication, async (req: Request, res: Response) => {
-    const { id } = req.params;
-    
-    try {
-        const quote = await Quotes.findById(id);
+  const { id } = req.params;
+  const user = (req as any).user;
 
-        if(!quote) {
-            res.status(404).json({ message: "Quote not found!" });
-            return;
-        }
-        
-        const vendor = await User.findById(quote?.vendor.id);
-        quote.status = "verified";
-        
-        if(vendor){
-            vendor.is_active = false;
-            await vendor?.save();
-        }
+  try {
+    const quote = await Quotes.findById(id);
 
-        const notification = await Notification.create({
-            title: "Quote verified!",
-            description: `Your quote has been marked as verified by ${quote.vendor.name}`,
-            user_id: quote.requester?.id,
-            type: "quote",
-            quote_id: id
-        });
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
 
-        const notification2 = await Notification.create({
-            title: "Quote verified!",
-            description: `Your quote has been marked as verified by ${quote.vendor.name}`,
-            user_id: quote.vendor?.id,
-            type: "quote",
-            quote_id: id
-        });
+    if (!isRequester(quote, user)) {
+      res.status(403).json({ message: "Only the requester can verify this quote" });
+      return;
+    }
 
-        const transaction = await processTransaction({
-            user_id: quote.vendor?.id!,
-            type: 'deposit',
-            amount: parseFloat(quote?.amount?.toString()!),
-            description: "Payment for verified and completed quote",
-        });
+    if (quote.status !== "completed") {
+      res.status(400).json({ message: "Quote must be completed before verification" });
+      return;
+    }
 
-        await processTransaction({
-            user_id: quote.requester?.id!,
-            type: 'withdraw',
-            amount: parseFloat(quote?.amount?.toString()!),
-            description: "Payment for verified and completed quote",
-        });
+    const vendor = await User.findById(quote.vendor.id);
+    quote.status = "verified";
 
-        await quote.save();
-        await notification.save();
-        await notification2.save();
-        
-        res.status(200).json({
-            message: "Quote has been verified successfully and payment has been made",
-            quote
-        });
-        
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get complete: ${error.message}`});
-    }  
+    if (vendor) {
+      vendor.is_active = false;
+      await vendor.save();
+    }
+
+    await saveNotifcation(
+      "Quote verified!",
+      `Your quote for ${quote.title} has been verified`,
+      quote.requester?.id!,
+      "quote",
+      id
+    );
+
+    await saveNotifcation(
+      "Quote verified!",
+      `Payment for ${quote.title} has been released`,
+      quote.vendor?.id!,
+      "quote",
+      id
+    );
+
+    await processTransaction({
+      user_id: quote.vendor?.id!,
+      type: "deposit",
+      amount: parseFloat(quote.amount?.toString()!),
+      description: "Payment for verified and completed quote",
+      reference: `quote-verify-${id}-vendor`,
+    });
+
+    await processTransaction({
+      user_id: quote.requester?.id!,
+      type: "withdraw",
+      amount: parseFloat(quote.amount?.toString()!),
+      description: "Payment for verified and completed quote",
+      reference: `quote-verify-${id}-requester`,
+    });
+
+    await quote.save();
+
+    res.status(200).json({
+      message: "Quote has been verified successfully and payment has been made",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to verify quote: ${error.message}` });
+  }
 })
 .get("/vendor", authentication, async (req: Request, res: Response) => {
-    const user = (req as any).user;
+  const user = (req as any).user;
 
-    try {
-        const { limit, skip, page } = getPagination(req);
+  try {
+    const { limit, skip, page } = getPagination(req);
 
-        const [quotes, total] = await Promise.all([
-            Quotes.find({"vendor.id": user._id}),
-            // .skip(skip)
-            // .limit(limit),
-            Quotes.countDocuments({"vendor.id": user._id}),
-        ]);
+    const [quotes, total] = await Promise.all([
+      Quotes.find({ "vendor.id": user._id }).skip(skip).limit(limit),
+      Quotes.countDocuments({ "vendor.id": user._id }),
+    ]);
 
-        res.status(200).json({
-            message: "Success",
-            quotes,
-            page,
-            total,
-            pages: Math.ceil(total / limit),
-        });
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get quotes: ${error.message}`});
-    }  
+    res.status(200).json({
+      message: "Success",
+      quotes,
+      page,
+      total,
+      pages: Math.ceil(total / limit),
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to get quotes: ${error.message}` });
+  }
 })
 .get("/:id", authentication, async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -327,11 +321,9 @@ quoteRouter
       return res.status(404).json({ message: "Quote not found" });
     }
 
-    // Fetch both users (requester and vendor)
     const requesterUser = await User.findById(quote.requester.id).select("chat_id name");
     const vendorUser = await User.findById(quote.vendor.id).select("chat_id name");
 
-    // Attach chat_ids (null if not found)
     const result = {
       ...quote.toObject(),
       requester_chat_id: requesterUser?.chat_id ?? null,
@@ -347,82 +339,86 @@ quoteRouter
     res.status(500).json({ message: `Unable to get quote: ${error.message}` });
   }
 })
-.post("/", authentication, async(req: Request, res: Response) => {
-    const user = (req as any).user;
-    try {
-        const { vendor_id, title, description } = req.body;
-        const vendorUser = await User.findById(vendor_id);
+.post("/", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
 
-        if(!vendorUser) {
-            res.status(400).json({message: "No vendor selected!"});
-            return;
-        }
-        
-        const quote = await Quotes.create({
-            title,
-            description,
-            // "requester.id": "",
-            "requester": {
-                id: user._id,
-                name: `${user.first_name} ${user.last_name}`,
-                picture: user.picture,
-            },
-            "vendor": {
-                id: vendorUser._id,
-                name: `${vendorUser.first_name} ${vendorUser.last_name}`,
-                picture: vendorUser.picture,
-            }
-        });
+  try {
+    const { vendor_id, title, description } = req.body;
+    const vendorUser = await User.findById(vendor_id);
 
-        await quote.save();
-        const response = await saveNotifcation(
-            `New Quote Request - ${title}`,
-            `You have a new quote from ${quote.requester.name} - ${description}`,
-            vendorUser?._id,
-            "quote",
-            quote.id
-        )
-        
+    if (!vendorUser) {
+      res.status(400).json({ message: "No vendor selected!" });
+      return;
+    }
 
-        res.status(200).json({
-            quote,
-            message: "Success"
-        })
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get save quote: ${error.message}`});
-    } 
+    const quote = await Quotes.create({
+      title,
+      description,
+      requester: {
+        id: user._id,
+        name: `${user.first_name} ${user.last_name}`,
+        picture: user.picture,
+      },
+      vendor: {
+        id: vendorUser._id,
+        name: `${vendorUser.first_name} ${vendorUser.last_name}`,
+        picture: vendorUser.picture,
+      },
+    });
+
+    await saveNotifcation(
+      `New Quote Request - ${title}`,
+      `You have a new quote from ${quote.requester.name} - ${description}`,
+      vendorUser._id,
+      "quote",
+      quote.id
+    );
+
+    res.status(200).json({
+      quote,
+      message: "Success",
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to save quote: ${error.message}` });
+  }
 })
-.post("/vendor", authentication, async(req: Request, res: Response) => {
-    try {
-        const { amount, comment, id } = req.body;
-        const quote = await Quotes.findById(id);
+.post("/vendor", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
 
-        if(!quote) {
-            res.status(400).json({message: "Quote not found"});
-            return;
-        }
+  try {
+    const { amount, comment, id } = req.body;
+    const quote = await Quotes.findById(id);
 
-        quote.amount = amount;
-        quote.vendor_comment = comment;
-        quote.status = "replied"
+    if (!quote) {
+      res.status(400).json({ message: "Quote not found" });
+      return;
+    }
 
-        const response = await saveNotifcation(
-            `Your Quote is Replied`,
-            `Your quote from ${quote.vendor.name} comment: ${comment}, Amount ${amount}`,
-            quote.requester.id,
-            "quote",
-            quote.id
-        )
-        await quote.save();
+    if (!isVendor(quote, user)) {
+      res.status(403).json({ message: "Only the assigned vendor can reply to this quote" });
+      return;
+    }
 
-        res.status(200).json({
-            message: "Quote replied successfully!"
-        })
-    } catch (error: any) {
-        res.status(500).json({message: `Unable to get reply quote: ${error.message}`});
-    } 
-})
+    quote.amount = amount;
+    quote.vendor_comment = comment;
+    quote.status = "replied";
 
+    await saveNotifcation(
+      "Your Quote is Replied",
+      `Your quote from ${quote.vendor.name} comment: ${comment}, Amount ${amount}`,
+      quote.requester.id,
+      "quote",
+      quote.id
+    );
 
+    await quote.save();
+
+    res.status(200).json({
+      message: "Quote replied successfully!",
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to reply to quote: ${error.message}` });
+  }
+});
 
 export default quoteRouter;
