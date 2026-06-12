@@ -4,6 +4,7 @@ import User from "../schema/userSchema";
 import { sendPush } from "./sendPush";
 import { verifyToken } from "./tokens";
 import { extractToken } from "./extractToken";
+import { buildReplySnapshot, sanitizeMentions } from "./chatMessageHelpers";
 
 function getSocketUserId(socket: Socket): string | null {
   const token =
@@ -49,24 +50,46 @@ export default function handleSocket(io: Server) {
       console.log(`📥 User ${userId} joined room ${userId}`);
     });
 
-    socket.on("sendMessage", async (data) => {
+    socket.on("sendMessage", async (data, callback) => {
       try {
-        const { sender_id, recipient_id, text, media } = data;
+        const { sender_id, recipient_id, text, media, reply_to, mentions } = data;
 
         if (sender_id !== chatId) {
-          socket.emit("error", { message: "Unauthorized sender" });
+          callback?.({ ok: false, message: "Unauthorized sender" });
           return;
         }
 
-        if (!sender_id || !recipient_id || (!text && !media)) {
-          socket.emit("error", { message: "Invalid message format" });
+        if (!sender_id || !recipient_id || (!text?.trim() && !media)) {
+          callback?.({ ok: false, message: "Invalid message format" });
           return;
         }
 
-        const message = await Message.create({ sender_id, recipient_id, text, media });
+        const replySnapshot = await buildReplySnapshot(
+          reply_to,
+          sender_id,
+          recipient_id
+        );
+        const sanitizedMentions = sanitizeMentions(
+          mentions,
+          sender_id,
+          recipient_id
+        );
 
-        io.to(recipient_id).emit("receiveMessage", message);
-        socket.emit("messageSent", message);
+        const message = await Message.create({
+          sender_id,
+          recipient_id,
+          text: text?.trim() || "",
+          media,
+          reply_to: replySnapshot,
+          mentions: sanitizedMentions,
+        });
+
+        const savedMessage = message.toObject();
+        console.log("💬 Message saved:", savedMessage._id);
+
+        io.to(recipient_id).emit("receiveMessage", savedMessage);
+        socket.emit("messageSent", savedMessage);
+        callback?.({ ok: true, message: savedMessage });
 
         const sender = await User.findOne({ chat_id: sender_id }).select(
           "first_name last_name"
@@ -80,16 +103,27 @@ export default function handleSocket(io: Server) {
             ? `${sender.first_name} ${sender.last_name}`
             : "Someone";
 
-          await sendPush(
+          const wasMentioned = sanitizedMentions.some(
+            (mention) => mention.chat_id === recipient_id
+          );
+          const pushBody = wasMentioned
+            ? `${senderName} mentioned you: ${text || "📎 Sent you a file"}`
+            : replySnapshot
+              ? `${senderName} replied: ${text || "📎 Sent you a file"}`
+              : text || "📎 Sent you a file";
+
+          sendPush(
             receiver.expo_push_tokens,
             senderName,
-            text || "📎 Sent you a file",
+            pushBody,
             { type: "chat", chatId: sender_id, senderId: sender_id }
-          );
+          ).catch((pushError) => {
+            console.error("Push notification failed:", pushError);
+          });
         }
       } catch (error) {
         console.error("❌ Error sending message:", error);
-        socket.emit("error", { message: "Failed to send message" });
+        callback?.({ ok: false, message: "Failed to send message" });
       }
     });
 
