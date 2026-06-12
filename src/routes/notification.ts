@@ -1,6 +1,7 @@
 import { Request, Response, Router } from "express";
 import Notification from "../schema/notificationScheme";
 import { authentication } from "../middleware/authentication";
+import { getPagination } from "../utils/pagination";
 
 const notificationRouter = Router();
 
@@ -46,12 +47,23 @@ notificationRouter
   const user = (req as any).user;
 
   try {
-    const allNotification = await Notification.find({
-      user_id: user._id.toString(),
-    }).sort({ createdAt: -1 });
+    const { limit, skip, page } = getPagination(req);
+    const userId = user._id.toString();
+
+    const [notifications, total] = await Promise.all([
+      Notification.find({ user_id: userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Notification.countDocuments({ user_id: userId }),
+    ]);
 
     res.status(200).json({
-      notifications: allNotification,
+      notifications,
+      page,
+      total,
+      pages: Math.ceil(total / limit),
+      hasMore: page * limit < total,
       message: "success",
     });
   } catch (error) {

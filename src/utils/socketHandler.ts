@@ -53,30 +53,32 @@ export default function handleSocket(io: Server) {
     socket.on("sendMessage", async (data, callback) => {
       try {
         const { sender_id, recipient_id, text, media, reply_to, mentions } = data;
+        const actualSenderId = chatId;
 
-        if (sender_id !== chatId) {
-          callback?.({ ok: false, message: "Unauthorized sender" });
-          return;
+        if (sender_id && sender_id !== actualSenderId) {
+          console.warn(
+            `Sender mismatch: client=${sender_id} authenticated=${actualSenderId}`
+          );
         }
 
-        if (!sender_id || !recipient_id || (!text?.trim() && !media)) {
+        if (!recipient_id || (!text?.trim() && !media)) {
           callback?.({ ok: false, message: "Invalid message format" });
           return;
         }
 
         const replySnapshot = await buildReplySnapshot(
           reply_to,
-          sender_id,
+          actualSenderId,
           recipient_id
         );
         const sanitizedMentions = sanitizeMentions(
           mentions,
-          sender_id,
+          actualSenderId,
           recipient_id
         );
 
         const message = await Message.create({
-          sender_id,
+          sender_id: actualSenderId,
           recipient_id,
           text: text?.trim() || "",
           media,
@@ -91,7 +93,7 @@ export default function handleSocket(io: Server) {
         socket.emit("messageSent", savedMessage);
         callback?.({ ok: true, message: savedMessage });
 
-        const sender = await User.findOne({ chat_id: sender_id }).select(
+        const sender = await User.findOne({ chat_id: actualSenderId }).select(
           "first_name last_name"
         );
         const receiver = await User.findOne({ chat_id: recipient_id }).select(
@@ -116,7 +118,7 @@ export default function handleSocket(io: Server) {
             receiver.expo_push_tokens,
             senderName,
             pushBody,
-            { type: "chat", chatId: sender_id, senderId: sender_id }
+            { type: "chat", chatId: actualSenderId, senderId: actualSenderId }
           ).catch((pushError) => {
             console.error("Push notification failed:", pushError);
           });

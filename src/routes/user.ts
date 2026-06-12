@@ -132,6 +132,21 @@ userRouter
     }
   }
 )
+.get("/me", authentication, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+
+    return res.status(200).json({
+      message: "Current user fetched",
+      user,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Unable to fetch current user",
+      error: error.message,
+    });
+  }
+})
 .get("/all", authentication, async (_req: Request, res: Response) => {
   try {
     const allUsers = await User.find({ is_vendor: false }).select('-password -__v');

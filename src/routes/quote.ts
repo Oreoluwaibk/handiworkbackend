@@ -296,7 +296,10 @@ quoteRouter
     const { limit, skip, page } = getPagination(req);
 
     const [quotes, total] = await Promise.all([
-      Quotes.find({ "vendor.id": user._id }).skip(skip).limit(limit),
+      Quotes.find({ "vendor.id": user._id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
       Quotes.countDocuments({ "vendor.id": user._id }),
     ]);
 
@@ -306,6 +309,7 @@ quoteRouter
       page,
       total,
       pages: Math.ceil(total / limit),
+      hasMore: page * limit < total,
     });
   } catch (error: any) {
     res.status(500).json({ message: `Unable to get quotes: ${error.message}` });

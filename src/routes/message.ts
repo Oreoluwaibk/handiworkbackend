@@ -1,10 +1,18 @@
 import { Router, Request, Response } from "express";
 import Message from "../schema/messageSchema";
-import mongoose from "mongoose";
 import { authentication } from "../middleware/authentication";
-// import Message from "../models/messageSchema";
 
 const messageRouter = Router();
+const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 50;
+
+function parsePageSize(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return DEFAULT_PAGE_SIZE;
+  }
+  return Math.min(parsed, MAX_PAGE_SIZE);
+}
 
 // Get chat history between two users
 messageRouter
@@ -73,20 +81,40 @@ messageRouter
   const { user1, user2 } = req.params;
   const user = (req as any).user;
   const chatId = user.chat_id;
+  const limit = parsePageSize(req.query.limit);
+  const before = req.query.before as string | undefined;
 
   if (chatId !== user1 && chatId !== user2) {
     return res.status(403).json({ message: "You can only view your own conversations" });
   }
 
   try {
-    const messages = await Message.find({
+    const conversationFilter = {
       $or: [
         { sender_id: user1, recipient_id: user2 },
         { sender_id: user2, recipient_id: user1 },
       ],
-    }).sort({ createdAt: 1 });
+    };
 
-    res.json(messages);
+    const query: Record<string, unknown> = { ...conversationFilter };
+
+    if (before) {
+      const beforeDate = new Date(before);
+      if (!Number.isNaN(beforeDate.getTime())) {
+        query.createdAt = { $lt: beforeDate };
+      }
+    }
+
+    const messages = await Message.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    const orderedMessages = [...messages].reverse();
+
+    res.json({
+      messages: orderedMessages,
+      hasMore: messages.length === limit,
+    });
   } catch (error) {
     res.status(500).json({ message: "Error retrieving messages", error });
   }

@@ -1,5 +1,9 @@
-import Message, { IMessageMention, IMessageReply } from "../schema/messageSchema";
+import Message, { IMessage, IMessageMention, IMessageReply } from "../schema/messageSchema";
 import User from "../schema/userSchema";
+
+function getMessageId(message: IMessage): string {
+  return String(message.id);
+}
 
 export async function buildReplySnapshot(
   replyTo: Partial<IMessageReply> | undefined,
@@ -10,7 +14,9 @@ export async function buildReplySnapshot(
     return undefined;
   }
 
-  const original = await Message.findById(replyTo.message_id);
+  const original = (await Message.findById(
+    replyTo.message_id
+  )) as IMessage | null;
   if (!original) {
     return undefined;
   }
@@ -25,7 +31,7 @@ export async function buildReplySnapshot(
 
   if (replyTo.sender_name && replyTo.sender_id) {
     return {
-      message_id: original._id.toString(),
+      message_id: getMessageId(original),
       text: replyTo.text ?? original.text,
       sender_id: replyTo.sender_id,
       sender_name: replyTo.sender_name,
@@ -38,7 +44,7 @@ export async function buildReplySnapshot(
   );
 
   return {
-    message_id: original._id.toString(),
+    message_id: getMessageId(original),
     text: original.text,
     sender_id: original.sender_id,
     sender_name: replySender
