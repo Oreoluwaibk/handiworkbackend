@@ -10,6 +10,7 @@ import path from 'path';
 import connectionToDatabase from './dbconfig/index';
 import router from './routes';
 import handleSocket from './utils/socketHandler';
+import { setSocketIo } from './utils/socketIo';
 
 const app: Application = express();
 const httpServer = createServer(app);
@@ -21,6 +22,7 @@ const io = new Server(httpServer, {
   },
 });
 
+setSocketIo(io);
 handleSocket(io);
 
 app.use(cors());

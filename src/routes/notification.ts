@@ -5,11 +5,50 @@ import { authentication } from "../middleware/authentication";
 const notificationRouter = Router();
 
 notificationRouter
+.get("/unread-count", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+
+  try {
+    const count = await Notification.countDocuments({
+      user_id: user._id.toString(),
+      is_read: false,
+    });
+
+    res.status(200).json({
+      count,
+      message: "success",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `unable to get unread count, ${error}`,
+    });
+  }
+})
+.patch("/read-all", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+
+  try {
+    await Notification.updateMany(
+      { user_id: user._id.toString(), is_read: false },
+      { $set: { is_read: true } }
+    );
+
+    res.status(200).json({ message: "success" });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `unable to mark notifications as read, ${error}`,
+    });
+  }
+})
 .get("/", authentication, async (req: Request, res: Response) => {
   const user = (req as any).user;
 
   try {
-    const allNotification = await Notification.find({ user_id: user._id });
+    const allNotification = await Notification.find({
+      user_id: user._id.toString(),
+    }).sort({ createdAt: -1 });
 
     res.status(200).json({
       notifications: allNotification,
@@ -84,6 +123,37 @@ notificationRouter
     message: "success",
     notification,
   });
+})
+.patch("/:id/read", authentication, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = (req as any).user;
+
+  try {
+    const notification = await Notification.findById(id);
+
+    if (!notification) {
+      return res.status(404).json({
+        message: "No notification with this id exist",
+      });
+    }
+
+    if (notification.user_id?.toString() !== user._id.toString()) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    notification.is_read = true;
+    await notification.save();
+
+    res.status(200).json({
+      message: "success",
+      notification,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `unable to mark notification as read, ${error}`,
+    });
+  }
 })
 .put("/:id", authentication, async (req: Request, res: Response) => {
   const { id } = req.params;

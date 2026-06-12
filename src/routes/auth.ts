@@ -5,6 +5,7 @@ import { createToken, generateOtp, resetToken, verifyToken } from "../utils/toke
 import bcryptjs from "bcryptjs";
 import { sendOtp } from "../utils/email";
 import { v4 as uuidv4 } from 'uuid';
+import { authentication, AuthenticatedRequest } from "../middleware/authentication";
 
 const saltRounds = 10;
 const authRouter = Router();
@@ -209,6 +210,22 @@ authRouter
   res.status(200).json({
     success: true,
     message: "password reset successful",
+  });
+})
+.post("/push-token", authentication, async (req: AuthenticatedRequest, res: Response) => {
+  const { expoPushToken } = req.body;
+
+  if (!expoPushToken) {
+    return res.status(400).json({ message: "expoPushToken is required" });
+  }
+
+  await User.findByIdAndUpdate(req.user._id, {
+    $addToSet: { expo_push_tokens: expoPushToken },
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Push token saved",
   });
 });
 

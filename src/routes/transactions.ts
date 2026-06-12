@@ -8,7 +8,7 @@ import Transaction from '../schema/transactionSchema';
 import { authentication } from '../middleware/authentication';
 import { requireAdminKey } from '../middleware/adminAuth';
 import User from '../schema/userSchema';
-import Notification from '../schema/notificationScheme';
+import { saveNotifcation } from '../utils/saveNotification';
 
 const transactionRouter = express.Router();
 
@@ -62,18 +62,20 @@ export async function processTransaction({
     wallet.balance -= amount;
   }
 
+  await transaction.save();
+  await wallet.save();
+
   if (status === 'completed') {
-    await Notification.create({
-      title: `Transaction - ${type}`,
-      description: `${amount} has been ${
+    await saveNotifcation(
+      `Transaction - ${type}`,
+      `${amount} has been ${
         type === 'deposit' ? 'deposited to' : 'withdrawn from'
       } your wallet`,
       user_id,
-    });
+      'transaction',
+      transaction._id.toString()
+    );
   }
-
-  await transaction.save();
-  await wallet.save();
 
   return transaction;
 }
@@ -290,11 +292,12 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
       },
     });
 
-    await Notification.create({
-      title: "Subscription Activated",
-      description: `You are now subscribed to the ${planName} plan.`,
-      user_id: user._id,
-    });
+    await saveNotifcation(
+      "Subscription Activated",
+      `You are now subscribed to the ${planName} plan.`,
+      user._id,
+      "subscription"
+    );
 
     res.status(200).json({
       message: "Subscription verified and activated successfully",
@@ -394,11 +397,12 @@ transactionRouter.post(
             },
           });
 
-          await Notification.create({
-            title: "Subscription Renewed",
-            description: `Your ${plan.name} plan has been renewed.`,
-            user_id: user._id,
-          });
+          await saveNotifcation(
+            "Subscription Renewed",
+            `Your ${plan.name} plan has been renewed.`,
+            user._id,
+            "subscription"
+          );
         }
       }
 
@@ -416,11 +420,13 @@ transactionRouter.post(
         });
 
         if (user) {
-          await Notification.create({
-            title: "Withdrawal Successful",
-            description: `₦${amount / 100} has been successfully transferred to your account.`,
-            user_id: user._id,
-          });
+          await saveNotifcation(
+            "Withdrawal Successful",
+            `₦${amount / 100} has been successfully transferred to your account.`,
+            user._id,
+            "transaction",
+            reference
+          );
         }
       }
 
@@ -438,11 +444,13 @@ transactionRouter.post(
             await wallet.save();
           }
 
-          await Notification.create({
-            title: "Withdrawal Failed",
-            description: `Your withdrawal of ₦${transaction.amount} failed: ${reason}. The amount has been refunded to your wallet.`,
-            user_id: transaction.user_id,
-          });
+          await saveNotifcation(
+            "Withdrawal Failed",
+            `Your withdrawal of ₦${transaction.amount} failed: ${reason}. The amount has been refunded to your wallet.`,
+            transaction.user_id,
+            "transaction",
+            transaction._id.toString()
+          );
         }
       }
 

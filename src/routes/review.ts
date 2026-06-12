@@ -50,6 +50,16 @@ reviewRouter
 
         await newReview.save();
 
+        const vendor = await User.findById(vendor_id).select("_id first_name");
+        if (vendor) {
+            await saveNotifcation(
+                "New Review",
+                `${user.first_name} left a review on your profile`,
+                vendor._id,
+                "notification"
+            );
+        }
+
         res.status(200).json({
             message: "Success",
             review: newReview
