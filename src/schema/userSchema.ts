@@ -4,7 +4,8 @@ interface IUser {
   first_name: string;
   last_name?: string;
   phone_number: string;
-  password: string;
+  password?: string;
+  google_id?: string | null;
   picture?: string;
   address: string;
   address_line2?: string;
@@ -70,7 +71,8 @@ const userSchema = new Schema<IUser>(
     phone_number: { required: false, type: String },
     picture: { required: false, type: String, default: null },
     bio: { required: false, type: String, default: "" },
-    password: { required: true, type: String },
+    password: { required: false, type: String },
+    google_id: { required: false, type: String, index: true },
     resetToken: { required: false, type: String },
     otp: { required: false, type: Number },
     address: { required: false, type: String, default: null },

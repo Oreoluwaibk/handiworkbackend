@@ -1,5 +1,4 @@
 import express from 'express';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import axios from 'axios';
 
@@ -9,6 +8,7 @@ import { authentication } from '../middleware/authentication';
 import { requireAdminKey } from '../middleware/adminAuth';
 import User from '../schema/userSchema';
 import { saveNotifcation } from '../utils/saveNotification';
+import { confirmUserPassword } from '../utils/password';
 
 const transactionRouter = express.Router();
 
@@ -145,8 +145,8 @@ transactionRouter.post('/deposit', authentication, async (req, res) => {
     const dbUser = await User.findById(user_id);
     if (!dbUser) return res.status(404).json({ message: 'User not found' });
 
-    const isValid = await bcrypt.compare(password, dbUser.password);
-    if (!isValid) return res.status(401).json({ message: 'Invalid password' });
+    const passwordCheck = confirmUserPassword(dbUser, password);
+    if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
     const transaction = await processTransaction({
       user_id,
@@ -165,8 +165,8 @@ transactionRouter.post('/deposit/paystack', authentication, async (req, res) => 
   const user = (req as any).user;
 
   try {
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) return res.status(401).json({ message: 'Invalid password' });
+    const passwordCheck = confirmUserPassword(user, password);
+    if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
     const initResponse = await initializePayment({
       email: user.email,
@@ -497,8 +497,8 @@ transactionRouter.post("/withdraw", authentication, async (req, res) => {
   const { account_number, bank_code, amount, account_name, password } = req.body;
 
   try {
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) return res.status(401).json({ message: 'Invalid password' });
+    const passwordCheck = confirmUserPassword(user, password);
+    if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
     const withdrawalAmount = Number(amount);
 

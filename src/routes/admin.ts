@@ -155,6 +155,10 @@ adminRouter.post("/auth/login", async (req: Request, res: Response) => {
       return res.status(403).json({ message: "This account has been deactivated" });
     }
 
+    if (!user.password) {
+      return res.status(401).json({ message: "This account uses Google sign-in" });
+    }
+
     const isPasswordCorrect = bcryptjs.compareSync(password, user.password);
     if (!isPasswordCorrect) {
       return res.status(401).json({ message: "Incorrect password" });

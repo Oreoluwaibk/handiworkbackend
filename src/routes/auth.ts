@@ -8,6 +8,48 @@ import { v4 as uuidv4 } from 'uuid';
 import { authentication, AuthenticatedRequest } from "../middleware/authentication";
 import { applyDeviceUpdate } from "../utils/device";
 import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
+import { verifyGoogleIdToken, exchangeGoogleAuthCode } from "../utils/googleAuth";
+
+function sendGoogleAppRedirect(res: Response, params: Record<string, string>) {
+  const appUrl = `quikwrk://oauthredirect?${new URLSearchParams(params).toString()}`;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signing in to QuikWrk</title>
+  </head>
+  <body style="font-family: sans-serif; padding: 24px; text-align: center;">
+    <p>Signing you in to QuikWrk...</p>
+    <script>
+      window.location.replace(${JSON.stringify(appUrl)});
+    </script>
+  </body>
+</html>`);
+}
+
+function createSessionToken(user: any) {
+  return createToken({
+    first_name: user.first_name,
+    last_name: user.last_name,
+    email: user.email,
+    phone_number: user.phone_number,
+    _id: user._id.toString(),
+    is_admin: Boolean(user.is_admin),
+  });
+}
+
+async function ensureWallet(userId: string) {
+  const existing = await Wallet.findOne({ user_id: userId });
+  if (existing) return existing;
+
+  return Wallet.create({
+    user_id: userId,
+    currency_code: "NGN",
+    balance: 0,
+    is_active: true,
+  });
+}
 
 const saltRounds = 10;
 const authRouter = Router();
@@ -78,23 +120,9 @@ authRouter
     applyDeviceUpdate(user, device);
     await user.save();
 
-    const wallet = new Wallet({
-      user_id: user._id,
-      currency_code: "NGN",
-      balance: 0,
-      is_active: true,
-    });
+    await ensureWallet(user._id.toString());
 
-    await wallet.save();
-
-    const token = createToken({
-      first_name: user.first_name,
-      last_name: user.last_name,
-      email: user.email,
-      phone_number: user.phone_number,
-      _id: user._id.toString(),
-      is_admin: false,
-    });
+    const token = createSessionToken(user);
 
     res.status(200).json({
       token,
@@ -135,6 +163,14 @@ authRouter
       return;
     }
 
+    if (!user.password) {
+      res.status(401).json({
+        success: false,
+        message: "This account uses Google sign-in. Continue with Google to log in.",
+      });
+      return;
+    }
+
     const isPasswordCorrect = bcryptjs.compareSync(password, user.password);
 
     if (!isPasswordCorrect) {
@@ -152,14 +188,7 @@ authRouter
       });
     }
 
-    const token = createToken({
-      first_name: user.first_name,
-      last_name: user.last_name,
-      email: user.email,
-      phone_number: user.phone_number,
-      _id: user._id.toString(),
-      is_admin: user.is_admin,
-    });
+    const token = createSessionToken(user);
 
     res.status(200).json({
       success: true,
@@ -170,6 +199,109 @@ authRouter
   } catch (error: any) {
     console.log("err", error);
     res.status(500).json({ message: `Cannot login - ${error.message || error}` });
+  }
+})
+.post("/google", async (req: Request, res: Response) => {
+  const { idToken, expoPushToken, device } = req.body;
+
+  try {
+    const profile = await verifyGoogleIdToken(idToken);
+    const normalizedEmail = normalizeEmail(profile.email);
+
+    let user = await User.findOne({
+      $or: [{ google_id: profile.google_id }, emailMatch(normalizedEmail)],
+    });
+
+    if (user?.is_deleted) {
+      return res.status(404).json({
+        success: false,
+        message: "User has been deactivated, kindly reactivate your account or contact admin!",
+      });
+    }
+
+    if (!user) {
+      user = await User.create({
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        email: normalizedEmail,
+        picture: profile.picture,
+        google_id: profile.google_id,
+        chat_id: uuidv4(),
+        referral_code: null,
+        referred_by: null,
+        last_login: new Date(),
+        is_verified: true,
+        subscription: {
+          plan_name: null,
+          amount: 0,
+          active: false,
+          start_date: null,
+          renewed_at: null,
+        },
+      });
+      await ensureWallet(user._id.toString());
+    } else {
+      if (!user.google_id) user.google_id = profile.google_id;
+      if (!user.picture && profile.picture) user.picture = profile.picture;
+      if (!user.first_name && profile.first_name) user.first_name = profile.first_name;
+      if (!user.last_name && profile.last_name) user.last_name = profile.last_name;
+      user.is_verified = true;
+      user.last_login = new Date();
+    }
+
+    applyDeviceUpdate(user, device);
+    await user.save();
+
+    if (expoPushToken) {
+      await User.findByIdAndUpdate(user._id, {
+        $addToSet: { expo_push_tokens: expoPushToken },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Google sign-in successful",
+      user,
+      token: createSessionToken(user),
+    });
+  } catch (error: any) {
+    console.error("Google auth error:", error);
+    return res.status(error.status || 401).json({
+      success: false,
+      message: error.message || "Unable to sign in with Google",
+    });
+  }
+})
+.get("/google/callback", async (req: Request, res: Response) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+  const errorDescription =
+    typeof req.query.error_description === "string" ? req.query.error_description : "";
+
+  if (error) {
+    return sendGoogleAppRedirect(res, {
+      error: errorDescription || error,
+      state,
+    });
+  }
+
+  if (!code) {
+    return sendGoogleAppRedirect(res, {
+      error: "Google sign-in did not return an authorization code",
+      state,
+    });
+  }
+
+  try {
+    const idToken = await exchangeGoogleAuthCode(code);
+    return sendGoogleAppRedirect(res, { id_token: idToken, state });
+  } catch (err: any) {
+    console.error("Google callback error:", err);
+    return sendGoogleAppRedirect(res, {
+      error: err.message || "Unable to complete Google sign-in",
+      state,
+    });
   }
 })
 .post("/forgot-password", async (req: Request, res: Response) => {
