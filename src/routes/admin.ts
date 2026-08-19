@@ -19,6 +19,7 @@ import { isInflow, isOutflow, sumBy } from "../utils/finance";
 import { pipelineCounts, quoteStatusQuery, toQuoteWorkflowStatus } from "../utils/jobStatus";
 import { saveNotifcation } from "../utils/saveNotification";
 import { sendArtisanRequestUpdateEmail, getArtisanRequestStatusCopy } from "../utils/email";
+import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
 
 const adminRouter = Router();
 const saltRounds = 10;
@@ -145,7 +146,7 @@ adminRouter.post("/auth/login", async (req: Request, res: Response) => {
   }
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne(emailMatch(email));
 
     if (!user) {
       return res.status(404).json({ message: "Admin account not found" });
@@ -463,14 +464,19 @@ adminRouter.get("/users/:id", async (req: Request, res: Response) => {
 adminRouter.post("/users", async (req: Request, res: Response) => {
   const { first_name, last_name, email, password, phone_number, is_vendor } = req.body;
 
-  if (!first_name || !last_name || !email || !password) {
+  if (!first_name || !last_name || !email || !password || !phone_number) {
     return res.status(400).json({
-      message: "first_name, last_name, email and password are required",
+      message: "first_name, last_name, email, phone_number and password are required",
     });
   }
 
+  if (!isValidNigerianPhone(phone_number)) {
+    return res.status(400).json({ message: "Enter a valid Nigerian phone number" });
+  }
+
   try {
-    const existing = await User.findOne({ email });
+    const normalizedEmail = normalizeEmail(email);
+    const existing = await User.findOne(emailMatch(normalizedEmail));
     if (existing) {
       return res.status(400).json({ message: "A user with this email already exists" });
     }
@@ -478,8 +484,8 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
     const user = await User.create({
       first_name,
       last_name,
-      email,
-      phone_number: phone_number || "",
+      email: normalizedEmail,
+      phone_number: normalizePhone(phone_number),
       password: bcryptjs.hashSync(password, saltRounds),
       is_vendor: Boolean(is_vendor),
       is_deleted: false,
@@ -488,6 +494,8 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
     });
 
     applyUserUpdates(user, req.body);
+    user.email = normalizedEmail;
+    user.phone_number = normalizePhone(phone_number);
     await user.save();
 
     await Wallet.create({

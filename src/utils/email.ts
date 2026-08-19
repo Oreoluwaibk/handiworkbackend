@@ -1,8 +1,12 @@
 import path from "path";
+import dns from "dns";
 import fs from "fs-extra";
 import Handlebars from "handlebars";
 import nodemailer, { Transporter } from "nodemailer";
 import { Resend } from "resend";
+import { isNetworkError } from "./network";
+
+dns.setDefaultResultOrder("ipv4first");
 
 const compiledViews = path.join(__dirname, "..", "views");
 const sourceViews = path.join(__dirname, "..", "..", "src", "views");
@@ -26,6 +30,39 @@ const PUBLIC_MAILBOX_DOMAINS = new Set([
 let resendClient: Resend | null = null;
 let smtpTransport: Transporter | null = null;
 
+function ipv4Lookup(
+  hostname: string,
+  _options: unknown,
+  callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void
+) {
+  dns.lookup(hostname, { family: 4 }, callback);
+}
+
+function createGmailTransport(port: 465 | 587) {
+  const user = process.env.SMTP_EMAIL?.trim();
+  const pass = process.env.SMTP_PASSWORD?.trim().replace(/\s+/g, "");
+  if (!user || !pass) {
+    throw new Error("SMTP_EMAIL and SMTP_PASSWORD are required for Gmail fallback");
+  }
+
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port,
+    secure: port === 465,
+    requireTLS: port === 587,
+    auth: { user, pass },
+    family: 4,
+    lookup: ipv4Lookup,
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+    tls: {
+      minVersion: "TLSv1.2",
+      servername: "smtp.gmail.com",
+    },
+  } as any);
+}
+
 function getResend() {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
@@ -37,21 +74,35 @@ function getResend() {
   return resendClient;
 }
 
-function getSmtpTransport() {
-  const user = process.env.SMTP_EMAIL?.trim();
-  const pass = process.env.SMTP_PASSWORD?.trim().replace(/\s+/g, "");
-  if (!user || !pass) {
-    throw new Error("SMTP_EMAIL and SMTP_PASSWORD are required for Gmail fallback");
+async function sendViaGmail(to: string, subject: string, html: string) {
+  const ports: Array<465 | 587> = [587, 465];
+  let lastError: any;
+
+  for (const port of ports) {
+    try {
+      smtpTransport = createGmailTransport(port);
+      await smtpTransport.sendMail({
+        from: gmailFromAddress(),
+        to,
+        subject,
+        html,
+      });
+      return;
+    } catch (error: any) {
+      lastError = error;
+      smtpTransport = null;
+      if (error.code === "EAUTH" || error.responseCode === 535) {
+        throw new Error(
+          "Gmail rejected SMTP_PASSWORD. Google no longer accepts the normal account password. Create a 16-character App Password at https://myaccount.google.com/apppasswords and update SMTP_PASSWORD in .env, then restart the server."
+        );
+      }
+      if (!isNetworkError(error) && error.code !== "ESOCKET") {
+        throw error;
+      }
+    }
   }
-  if (!smtpTransport) {
-    smtpTransport = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: { user, pass },
-    });
-  }
-  return smtpTransport;
+
+  throw lastError;
 }
 
 function extractEmail(value: string) {
@@ -99,25 +150,6 @@ async function sendViaResend(to: string, subject: string, html: string) {
   }
 
   return data;
-}
-
-async function sendViaGmail(to: string, subject: string, html: string) {
-  try {
-    await getSmtpTransport().sendMail({
-      from: gmailFromAddress(),
-      to,
-      subject,
-      html,
-    });
-  } catch (error: any) {
-    smtpTransport = null;
-    if (error.code === "EAUTH" || error.responseCode === 535) {
-      throw new Error(
-        "Gmail rejected SMTP_PASSWORD. Google no longer accepts the normal account password. Create a 16-character App Password at https://myaccount.google.com/apppasswords and update SMTP_PASSWORD in .env, then restart the server."
-      );
-    }
-    throw error;
-  }
 }
 
 async function sendEmail({

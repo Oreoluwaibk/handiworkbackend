@@ -1,5 +1,8 @@
+import dns from 'dns';
 import express, { Application, Request, Response } from 'express';
 import dotenv from 'dotenv';
+
+dns.setDefaultResultOrder('ipv4first');
 dotenv.config();
 
 import cors from 'cors';
