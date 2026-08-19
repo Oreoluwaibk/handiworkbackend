@@ -204,13 +204,22 @@ authRouter
   }
 })
 .post("/google", async (req: Request, res: Response) => {
-  const { idToken, expoPushToken, device } = req.body;
+  const { idToken: bodyIdToken, code, expoPushToken, device } = req.body;
   console.log("[GoogleAuth] POST /auth/google", {
-    hasIdToken: Boolean(idToken),
+    hasIdToken: Boolean(bodyIdToken),
+    hasCode: Boolean(code),
     hasDevice: Boolean(device),
   });
 
   try {
+    const idToken = bodyIdToken || (code ? await exchangeGoogleAuthCode(code) : null);
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google authorization code or ID token is required",
+      });
+    }
+
     const profile = await verifyGoogleIdToken(idToken);
     const normalizedEmail = normalizeEmail(profile.email);
 
@@ -318,21 +327,8 @@ authRouter
     });
   }
 
-  try {
-    const idToken = await exchangeGoogleAuthCode(code);
-    console.log("[GoogleAuth] callback exchanging code succeeded, redirecting to app");
-    return sendGoogleAppRedirect(res, { id_token: idToken, state });
-  } catch (err: any) {
-    console.error("[GoogleAuth] callback exchange failed", {
-      message: err.message,
-      status: err.status,
-      response: err.response?.data,
-    });
-    return sendGoogleAppRedirect(res, {
-      error: err.message || "Unable to complete Google sign-in",
-      state,
-    });
-  }
+  console.log("[GoogleAuth] callback forwarding code to app (token exchange happens on the app API)");
+  return sendGoogleAppRedirect(res, { code, state });
 })
 .post("/forgot-password", async (req: Request, res: Response) => {
   const { email } = req.body;
