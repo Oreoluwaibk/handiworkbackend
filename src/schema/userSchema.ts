@@ -48,10 +48,19 @@ interface IUser {
     verified: boolean;
   };
 
- // ✅ ADD THESE
+  // ✅ ADD THESE
   createdAt: Date;
   updatedAt: Date;
   expo_push_tokens?: string[];
+  is_admin?: boolean;
+  last_login?: Date | null;
+  last_device?: {
+    platform?: string | null;
+    model?: string | null;
+    os_version?: string | null;
+    app_version?: string | null;
+    brand?: string | null;
+  };
 }
 
 const userSchema = new Schema<IUser>(
@@ -105,6 +114,15 @@ const userSchema = new Schema<IUser>(
       type: [String],
       default: [],
     },
+    is_admin: { type: Boolean, required: false, default: false },
+    last_login: { type: Date, required: false, default: null },
+    last_device: {
+      platform: { type: String, default: null },
+      model: { type: String, default: null },
+      os_version: { type: String, default: null },
+      app_version: { type: String, default: null },
+      brand: { type: String, default: null },
+    },
   },
   { timestamps: true }
 );
@@ -130,6 +148,15 @@ userSchema.virtual("has_access").get(function () {
 
   // 🔹 After 6 months → must subscribe (if subscription exists)
   return this.subscription?.active === true;
+});
+
+userSchema.virtual("account_status").get(function () {
+  return this.is_deleted ? "deactivated" : "active";
+});
+
+userSchema.virtual("occupancy").get(function () {
+  if (!this.is_vendor) return null;
+  return this.is_active ? "occupied" : "available";
 });
 
 const stripSensitiveFields = (_doc: unknown, ret: any) => {

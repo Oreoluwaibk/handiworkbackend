@@ -41,6 +41,7 @@ export async function processTransaction({
   if (!wallet || !wallet.is_active) throw new Error('Wallet not available');
 
   const isDebit = type === 'withdraw' || type === 'debit';
+  const isCredit = type === 'deposit' || type === 'reverse';
 
   if (isDebit && wallet.balance < amount) {
     throw new Error('Insufficient balance');
@@ -51,12 +52,17 @@ export async function processTransaction({
     type,
     amount,
     description:
-      description || (type === 'deposit' ? 'Wallet deposit' : 'Wallet withdrawal'),
+      description ||
+      (type === 'deposit'
+        ? 'Wallet deposit'
+        : type === 'reverse'
+        ? 'Wallet reversal'
+        : 'Wallet withdrawal'),
     status,
     reference,
   });
 
-  if (type === 'deposit') {
+  if (isCredit) {
     wallet.balance += amount;
   } else if (isDebit) {
     wallet.balance -= amount;
@@ -69,7 +75,7 @@ export async function processTransaction({
     await saveNotifcation(
       `Transaction - ${type}`,
       `${amount} has been ${
-        type === 'deposit' ? 'deposited to' : 'withdrawn from'
+        isCredit ? 'credited to' : 'withdrawn from'
       } your wallet`,
       user_id,
       'transaction',
@@ -562,6 +568,25 @@ transactionRouter.post("/withdraw", authentication, async (req, res) => {
     res.status(400).json({
       message: error.response?.data?.message || error.message,
     });
+  }
+});
+
+transactionRouter.get('/:id', authentication, async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    const transaction = await Transaction.findOne({
+      _id: req.params.id,
+      user_id: user._id,
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    res.status(200).json({ transaction });
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
   }
 });
 

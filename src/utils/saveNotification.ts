@@ -14,6 +14,8 @@ function buildPushData(type: NotificationType, referenceId?: string) {
       return { type: "subscription", id: referenceId || "" };
     case "chat":
       return { type: "chat", chatId: referenceId || "", senderId: referenceId || "" };
+    case "artisan_request":
+      return { type: "artisan_request", id: referenceId || "" };
     default:
       return { type: "notification", id: referenceId || "" };
   }
@@ -50,6 +52,8 @@ export const saveNotifcation = async (
         description,
         buildPushData(type, referenceId)
       );
+    } else {
+      console.warn(`Push skipped: user ${userObjectId} has no expo_push_tokens`);
     }
 
     const io = getSocketIo();

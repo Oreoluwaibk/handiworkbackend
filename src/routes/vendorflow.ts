@@ -97,6 +97,37 @@ vendorRouter
     res.status(500).json({ message: `Unable to get vendors - ${error}` });
   }
 })
+.get("/requests", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const { status } = req.query;
+
+  try {
+    const { limit, skip, page } = getPagination(req);
+    const query: Record<string, unknown> = {
+      $or: [
+        { user_id: user._id.toString() },
+        { email: new RegExp(`^${String(user.email || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+      ],
+    };
+
+    if (status) query.status = status;
+
+    const [requests, total] = await Promise.all([
+      ArtisanRequest.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      ArtisanRequest.countDocuments(query),
+    ]);
+
+    return res.status(200).json({
+      message: "Success",
+      requests,
+      page,
+      total,
+      pages: Math.ceil(total / Math.max(limit, 1)),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: `Unable to get artisan requests: ${error.message}` });
+  }
+})
 .get("/:id", authentication, async (req: Request, res: Response) => {
   const { id } = req.params;
 
@@ -130,6 +161,8 @@ vendorRouter
       address,
       problem,
       title,
+      user_id: (req as any).user?._id?.toString() || null,
+      status: "pending",
     });
 
     await sendArtisanRequestEmail({
@@ -147,6 +180,41 @@ vendorRouter
       success: false,
       message: `Unable to submit artisan request: ${error}`,
     });
+  }
+})
+.put("/request/:id/cancel", authentication, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+
+  try {
+    const request = await ArtisanRequest.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({ message: "Artisan request not found" });
+    }
+
+    const ownsRequest =
+      request.user_id === user._id.toString() ||
+      String(request.email || "").toLowerCase() === String(user.email || "").toLowerCase();
+
+    if (!ownsRequest) {
+      return res.status(403).json({ message: "You can only cancel your own request" });
+    }
+
+    if (!["pending", "in_progress"].includes(request.status)) {
+      return res.status(400).json({
+        message: "Only pending or in-progress requests can be cancelled",
+      });
+    }
+
+    request.status = "cancelled";
+    await request.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Artisan request cancelled",
+      request,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: `Unable to cancel request: ${error.message}` });
   }
 });
 

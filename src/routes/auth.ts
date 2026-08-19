@@ -6,6 +6,8 @@ import bcryptjs from "bcryptjs";
 import { sendOtp } from "../utils/email";
 import { v4 as uuidv4 } from 'uuid';
 import { authentication, AuthenticatedRequest } from "../middleware/authentication";
+import { applyDeviceUpdate } from "../utils/device";
+import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
 
 const saltRounds = 10;
 const authRouter = Router();
@@ -13,15 +15,28 @@ const authRouter = Router();
 authRouter
 .post("/register", async (req: Request, res: Response) => {
   try {
-    const { first_name, last_name, email, password, phone_number, referred_by } = req.body;
+    const { first_name, last_name, email, password, phone_number, referred_by, device } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPhone = normalizePhone(phone_number);
 
-    if (!first_name || !last_name || !email || !password) {
-      return res.status(400).json({ message: "first_name, last_name, email and password are required" });
+    if (!first_name || !last_name || !normalizedEmail || !password || !normalizedPhone) {
+      return res.status(400).json({
+        message: "first_name, last_name, email, phone_number and password are required",
+      });
     }
 
-    const isUser = await User.findOne({ email });
+    if (!isValidNigerianPhone(normalizedPhone)) {
+      return res.status(400).json({ message: "Enter a valid Nigerian phone number" });
+    }
+
+    const isUser = await User.findOne(emailMatch(normalizedEmail));
     if (isUser) {
       return res.status(400).json({ message: "User already exists, kindly login to continue" });
+    }
+
+    const existingPhone = await User.findOne({ phone_number: normalizedPhone });
+    if (existingPhone) {
+      return res.status(400).json({ message: "An account with this phone number already exists" });
     }
 
     let validReferrer: any | null = null;
@@ -42,15 +57,16 @@ authRouter
     const chat_id = uuidv4();
 
     const user = await User.create({
-      first_name,
-      last_name,
-      email,
-      phone_number: phone_number || "",
+      first_name: String(first_name).trim(),
+      last_name: String(last_name).trim(),
+      email: normalizedEmail,
+      phone_number: normalizedPhone,
       password: hashedPassword,
       picture: null,
       chat_id,
       referral_code: null,
       referred_by: validReferrer ? validReferrer.referral_code : null,
+      last_login: new Date(),
       subscription: {
         plan_name: null,
         amount: 0,
@@ -59,6 +75,8 @@ authRouter
         renewed_at: null,
       },
     });
+    applyDeviceUpdate(user, device);
+    await user.save();
 
     const wallet = new Wallet({
       user_id: user._id,
@@ -70,10 +88,12 @@ authRouter
     await wallet.save();
 
     const token = createToken({
-      first_name,
-      last_name,
-      email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      phone_number: user.phone_number,
       _id: user._id.toString(),
+      is_admin: false,
     });
 
     res.status(200).json({
@@ -90,14 +110,18 @@ authRouter
   }
 })
 .post("/login", async (req: Request, res: Response) => {
-  const { email, password, expoPushToken } = req.body;
+  const { email, password, expoPushToken, device } = req.body;
 
   try {
-    const user = await User.findOne({ email });
+    if (!normalizeEmail(email) || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const user = await User.findOne(emailMatch(email));
 
     if (!user) {
       res.status(404).json({
-        suceess: false,
+        success: false,
         message: "User does not exist, kindly register to continue!",
       });
       return;
@@ -105,8 +129,8 @@ authRouter
 
     if (user.is_deleted) {
       res.status(404).json({
-        suceess: false,
-        message: "User has been deactiviated, kindly reactivate your account or contact admin!",
+        success: false,
+        message: "User has been deactivated, kindly reactivate your account or contact admin!",
       });
       return;
     }
@@ -117,6 +141,10 @@ authRouter
       res.status(401).json({ success: false, message: "Incorrect password!" });
       return;
     }
+
+    user.last_login = new Date();
+    applyDeviceUpdate(user, device);
+    await user.save();
 
     if (expoPushToken) {
       await User.findByIdAndUpdate(user._id, {
@@ -130,6 +158,7 @@ authRouter
       email: user.email,
       phone_number: user.phone_number,
       _id: user._id.toString(),
+      is_admin: user.is_admin,
     });
 
     res.status(200).json({
@@ -138,90 +167,111 @@ authRouter
       user,
       token,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.log("err", error);
-    res.status(500).send(`Cannot login - ${error}`);
+    res.status(500).json({ message: `Cannot login - ${error.message || error}` });
   }
 })
 .post("/forgot-password", async (req: Request, res: Response) => {
   const { email } = req.body;
+  const normalizedEmail = normalizeEmail(email);
 
-  const user = await User.findOne({ email });
-
-  if (!user) {
-    res.status(404).json({ message: "user does not exist!" });
-    return;
+  if (!normalizedEmail) {
+    return res.status(400).json({ message: "Email is required" });
   }
 
-  const token = resetToken({ first_name: user.first_name, email: user.email });
-  const otp = generateOtp();
-
-  user.resetToken = token;
-  user.otp = otp;
-
-  await user.save();
-
   try {
-    await sendOtp(email, otp, user.first_name);
-    res.status(200).json({
+    const user = await User.findOne(emailMatch(normalizedEmail));
+
+    if (!user) {
+      return res.status(404).json({ message: "User does not exist!" });
+    }
+
+    if (user.is_deleted) {
+      return res.status(403).json({
+        message: "This account has been deactivated, kindly contact admin",
+      });
+    }
+
+    const token = resetToken({ first_name: user.first_name, email: user.email });
+    const otp = generateOtp();
+
+    user.resetToken = token;
+    user.otp = otp;
+    await user.save();
+
+    await sendOtp(user.email, otp, user.first_name);
+    return res.status(200).json({
       success: true,
-      message: "otp sent successful, kindly check mail or spam",
+      message: "OTP sent successfully, kindly check mail or spam",
       token,
+      email: user.email,
     });
   } catch (err) {
     console.log("err", err);
-    res.status(400).json({ message: "Unable to reset your password, try again or contact admin!" });
+    return res.status(400).json({
+      message: "Unable to reset your password, try again or contact admin!",
+    });
   }
 })
 .post("/reset-password/:token", async (req: Request, res: Response) => {
   const { token } = req.params;
   const { email, otp, password } = req.body;
 
-  const { valid } = verifyToken(token);
-
-  if (!valid) {
-    res.status(401).json({ message: "invalid token" });
-    return;
+  if (!email || !otp || !password) {
+    return res.status(400).json({ message: "email, otp and password are required" });
   }
 
-  const user = await User.findOne({ email });
+  try {
+    const { valid } = verifyToken(token);
 
-  if (!user) {
-    res.status(404).json({ message: "user does not exist!" });
-    return;
+    if (!valid) {
+      return res.status(401).json({ message: "Reset link has expired, request a new OTP" });
+    }
+
+    const user = await User.findOne(emailMatch(email));
+
+    if (!user) {
+      return res.status(404).json({ message: "User does not exist!" });
+    }
+
+    const submittedOtp = Number(String(otp).trim());
+    if (!user.otp || Number.isNaN(submittedOtp) || submittedOtp !== user.otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    if (token !== user.resetToken) {
+      return res.status(400).json({ message: "Reset token is not valid, request a new OTP" });
+    }
+
+    user.password = bcryptjs.hashSync(password, saltRounds);
+    user.resetToken = "";
+    user.otp = null;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successful",
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message || "Unable to reset password" });
   }
-
-  if (Number(otp) !== user.otp) {
-    res.status(400).send("Invalid OTP");
-    return;
-  }
-
-  if (token !== user.resetToken) {
-    res.status(400).send("token is not valid!");
-    return;
-  }
-
-  user.password = bcryptjs.hashSync(password, saltRounds);
-  user.resetToken = "";
-  user.otp = null;
-
-  await user.save();
-
-  res.status(200).json({
-    success: true,
-    message: "password reset successful",
-  });
 })
 .post("/push-token", authentication, async (req: AuthenticatedRequest, res: Response) => {
-  const { expoPushToken } = req.body;
+  const { expoPushToken, device } = req.body;
 
   if (!expoPushToken) {
     return res.status(400).json({ message: "expoPushToken is required" });
   }
 
-  await User.findByIdAndUpdate(req.user._id, {
-    $addToSet: { expo_push_tokens: expoPushToken },
-  });
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  user.expo_push_tokens = Array.from(new Set([...(user.expo_push_tokens || []), expoPushToken]));
+  applyDeviceUpdate(user, device);
+  await user.save();
 
   return res.status(200).json({
     success: true,

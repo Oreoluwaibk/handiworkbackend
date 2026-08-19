@@ -7,6 +7,7 @@ import { saveNotifcation } from "../utils/saveNotification";
 import { processTransaction } from "./transactions";
 import mongoose from "mongoose";
 import Wallet from "../schema/walletSchema";
+import { quoteStatusQuery } from "../utils/jobStatus";
 
 const quoteRouter = Router();
 
@@ -27,9 +28,7 @@ quoteRouter
     const { limit, skip, page } = getPagination(req);
 
     const query: any = { "requester.id": user._id };
-    if (status) {
-      query.status = status;
-    }
+    Object.assign(query, quoteStatusQuery(status as string));
 
     const [quotes, total] = await Promise.all([
       Quotes.find(query).skip(skip).limit(limit),
@@ -291,16 +290,19 @@ quoteRouter
 })
 .get("/vendor", authentication, async (req: Request, res: Response) => {
   const user = (req as any).user;
+  const { status } = req.query;
 
   try {
     const { limit, skip, page } = getPagination(req);
+    const query: any = { "vendor.id": user._id };
+    Object.assign(query, quoteStatusQuery(status as string));
 
     const [quotes, total] = await Promise.all([
-      Quotes.find({ "vendor.id": user._id })
+      Quotes.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Quotes.countDocuments({ "vendor.id": user._id }),
+      Quotes.countDocuments(query),
     ]);
 
     res.status(200).json({

@@ -1,126 +1,270 @@
-import nodemailer, { Transporter } from 'nodemailer';
-import hbs from 'nodemailer-express-handlebars';
-import path from 'path';
-import fs from 'fs-extra';
-import Handlebars from 'handlebars';
-import sgMail from '@sendgrid/mail';
+import path from "path";
+import fs from "fs-extra";
+import Handlebars from "handlebars";
+import nodemailer, { Transporter } from "nodemailer";
+import { Resend } from "resend";
 
-
-// Define transporter type
-let transporter: Transporter;
-sgMail.setApiKey(process.env.SENDGRID_API_KEY as string);
-
-// Create transporter
-transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.SMTP_EMAIL,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
-
-const compiledViews = path.join(__dirname, '..', 'views');
-const sourceViews = path.join(__dirname, '..', '..', 'src', 'views');
+const compiledViews = path.join(__dirname, "..", "views");
+const sourceViews = path.join(__dirname, "..", "..", "src", "views");
 const viewsDir = fs.existsSync(compiledViews) ? compiledViews : sourceViews;
 
-transporter.use(
-  'compile',
-  hbs({
-    viewEngine: {
-      partialsDir: viewsDir,
-    },
-    viewPath: viewsDir,
-    extName: '.handlebars',
-  })
-);
+const TEST_FROM = "QuikWrk <beth.t@example.com>";
+const PUBLIC_MAILBOX_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.co.uk",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+]);
 
-// Define function to send welcome email
-export async function sendWelcomeEmail(userEmail: string, userName: string): Promise<void> {
-  const template = await fs.readFile(path.join(viewsDir, 'welcome.handlebars'), 'utf-8');
-  const compiled = Handlebars.compile(template);
-  const html = compiled({ name: userName,  });
+let resendClient: Resend | null = null;
+let smtpTransport: Transporter | null = null;
 
-  const msg = {
-    to: userEmail,
-    from: process.env.FROM_EMAIL as string,
-    subject: 'Welcome to QuikWrk!',
+function getResend() {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+  if (!resendClient) {
+    resendClient = new Resend(apiKey);
+  }
+  return resendClient;
+}
+
+function getSmtpTransport() {
+  const user = process.env.SMTP_EMAIL?.trim();
+  const pass = process.env.SMTP_PASSWORD?.trim().replace(/\s+/g, "");
+  if (!user || !pass) {
+    throw new Error("SMTP_EMAIL and SMTP_PASSWORD are required for Gmail fallback");
+  }
+  if (!smtpTransport) {
+    smtpTransport = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user, pass },
+    });
+  }
+  return smtpTransport;
+}
+
+function extractEmail(value: string) {
+  const match = value.match(/<([^>]+)>/);
+  return (match ? match[1] : value).trim().toLowerCase();
+}
+
+function resendFromAddress() {
+  const configured = process.env.FROM_EMAIL?.trim();
+  if (!configured) return TEST_FROM;
+
+  const email = extractEmail(configured);
+  const domain = email.split("@")[1];
+  if (!domain || PUBLIC_MAILBOX_DOMAINS.has(domain) || email.includes("resend.dev")) {
+    return TEST_FROM;
+  }
+
+  if (configured.includes("<")) return configured;
+  return `QuikWrk <${configured}>`;
+}
+
+function gmailFromAddress() {
+  const user = process.env.SMTP_EMAIL?.trim();
+  if (!user) {
+    throw new Error("SMTP_EMAIL is not configured");
+  }
+  return `QuikWrk <${user}>`;
+}
+
+async function renderTemplate(fileName: string, context: Record<string, unknown>) {
+  const template = await fs.readFile(path.join(viewsDir, fileName), "utf-8");
+  return Handlebars.compile(template)(context);
+}
+
+async function sendViaResend(to: string, subject: string, html: string) {
+  const { data, error } = await getResend().emails.send({
+    from: resendFromAddress(),
+    to,
+    subject,
     html,
-  };
+  });
 
+  if (error) {
+    throw new Error(error.message || "Failed to send email with Resend");
+  }
+
+  return data;
+}
+
+async function sendViaGmail(to: string, subject: string, html: string) {
   try {
-    await sgMail.send(msg);
-    console.log(`✅ Email sent to ${userEmail}`);
-  } catch (error) {
-    console.error(`❌ Failed to send email to ${userEmail}:`, error);
+    await getSmtpTransport().sendMail({
+      from: gmailFromAddress(),
+      to,
+      subject,
+      html,
+    });
+  } catch (error: any) {
+    smtpTransport = null;
+    if (error.code === "EAUTH" || error.responseCode === 535) {
+      throw new Error(
+        "Gmail rejected SMTP_PASSWORD. Google no longer accepts the normal account password. Create a 16-character App Password at https://myaccount.google.com/apppasswords and update SMTP_PASSWORD in .env, then restart the server."
+      );
+    }
     throw error;
   }
 }
 
-export async function sendOtp(userEmail: string, otp: string | number, userName: string): Promise<void> {
-  // const mailOptions = {
-  //   from: '"QuikWrk Admin" <your-email@gmail.com>',
-  //   to: userEmail,
-  //   subject: 'Your One-Time Password (OTP)',
-  //   template: 'otp',
-  //   context: {
-  //     name: username,
-  //     otp: otp,
-  //     appName: 'QuikWrk Admin'
-  //   }
-  // };
+async function sendEmail({
+  to,
+  subject,
+  html,
+}: {
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  if (!to) {
+    throw new Error("Email recipient is missing");
+  }
 
-  // try {
-    
-  //   await transporter.sendMail(mailOptions);
-  //   console.log(`✅ Email sent to ${userEmail}`);
-  // } catch (error) {
-  //   console.error(`❌ Failed to send email to ${userEmail}:`, error);
-  //   throw error;
-  // }
-  
-   const template = await fs.readFile(path.join(viewsDir, 'otp.handlebars'), 'utf-8');
-    const compiled = Handlebars.compile(template);
-    const html = compiled({ name: userName, otp: otp, appName: 'QuikWrk Admin' });
-
-    const msg = {
-      to: userEmail,
-      from: process.env.FROM_EMAIL as string,
-      subject: 'Your One-Time Password (OTP)',
-      html,
-    };
-
+  if (process.env.RESEND_API_KEY?.trim()) {
     try {
-      await sgMail.send(msg);
-      console.log(`✅ Email sent to ${userEmail}`);
-    } catch (error) {
-      console.error(`❌ Failed to send email to ${userEmail}:`, error);
-      throw error;
+      return await sendViaResend(to, subject, html);
+    } catch (error: any) {
+      console.warn(
+        `Resend failed (${error.message}). Falling back to Gmail SMTP.`
+      );
     }
+  }
+
+  await sendViaGmail(to, subject, html);
+}
+
+export async function sendWelcomeEmail(userEmail: string, userName: string): Promise<void> {
+  const html = await renderTemplate("welcome.handlebars", { name: userName });
+
+  try {
+    await sendEmail({
+      to: userEmail,
+      subject: "Welcome to QuikWrk!",
+      html,
+    });
+    console.log(`Email sent to ${userEmail}`);
+  } catch (error) {
+    console.error(`Failed to send email to ${userEmail}:`, error);
+    throw error;
+  }
+}
+
+export async function sendOtp(
+  userEmail: string,
+  otp: string | number,
+  userName: string
+): Promise<void> {
+  const html = await renderTemplate("otp.handlebars", {
+    name: userName,
+    otp,
+    appName: "QuikWrk",
+  });
+
+  try {
+    await sendEmail({
+      to: userEmail,
+      subject: "Your One-Time Password (OTP)",
+      html,
+    });
+    console.log(`Email sent to ${userEmail}`);
+  } catch (error) {
+    console.error(`Failed to send email to ${userEmail}:`, error);
+    throw error;
+  }
 }
 
 export const sendArtisanRequestEmail = async (data: any) => {
-  try {
-    // Load and compile template
-    const templatePath = path.join(viewsDir, 'artisanRequest.handlebars');
-    const template = await fs.readFile(templatePath, 'utf-8');
-    const compiled = Handlebars.compile(template);
-    const html = compiled(data);
+  const to = process.env.NOTIFICATION_EMAIL?.trim();
+  if (!to) {
+    throw new Error("NOTIFICATION_EMAIL is not configured");
+  }
 
-    const msg = {
-      to: process.env.NOTIFICATION_EMAIL, // your team email
-      from: process.env.FROM_EMAIL as string,
+  try {
+    const html = await renderTemplate("artisanRequest.handlebars", data);
+    await sendEmail({
+      to,
       subject: "New Artisan Request",
       html,
-    };
-
-    await sgMail.send(msg);
-    console.log(`✅ Artisan request email sent to ${process.env.NOTIFICATION_EMAIL}`);
+    });
+    console.log(`Artisan request email sent to ${to}`);
   } catch (error) {
-    console.error("❌ Failed to send artisan request email:", error);
+    console.error("Failed to send artisan request email:", error);
     throw error;
   }
 };
 
+const REQUEST_STATUS_COPY: Record<string, { label: string; message: string }> = {
+  pending: {
+    label: "Pending",
+    message: "Your request is pending. We will assign an artisan shortly.",
+  },
+  in_progress: {
+    label: "In progress",
+    message: "Work is now in progress on your artisan request.",
+  },
+  fulfilled: {
+    label: "Fulfilled",
+    message: "Your artisan request has been fulfilled.",
+  },
+  delivered: {
+    label: "Delivered",
+    message: "Your artisan request has been marked as delivered.",
+  },
+  cancelled: {
+    label: "Cancelled",
+    message: "Your artisan request has been cancelled.",
+  },
+};
 
+export function getArtisanRequestStatusCopy(status?: string) {
+  return (
+    REQUEST_STATUS_COPY[status || ""] || {
+      label: status || "Updated",
+      message: "There is a new update on your artisan request.",
+    }
+  );
+}
 
+export async function sendArtisanRequestUpdateEmail(data: {
+  name?: string;
+  email?: string;
+  title?: string;
+  problem?: string;
+  status?: string;
+}) {
+  if (!data.email) {
+    throw new Error("Customer email is missing");
+  }
+
+  const copy = getArtisanRequestStatusCopy(data.status);
+
+  const html = await renderTemplate("artisanRequestUpdate.handlebars", {
+    name: data.name || "there",
+    title: data.title || "your request",
+    problem: data.problem || "",
+    statusLabel: copy.label,
+    statusMessage: copy.message,
+  });
+
+  await sendEmail({
+    to: data.email,
+    subject: `Update on your ${data.title || "artisan"} request: ${copy.label}`,
+    html,
+  });
+
+  return copy;
+}
 

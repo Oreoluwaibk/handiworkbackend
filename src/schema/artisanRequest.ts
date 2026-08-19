@@ -1,5 +1,15 @@
 import { Schema, model } from "mongoose";
 
+export const ARTISAN_REQUEST_STATUSES = [
+  "pending",
+  "in_progress",
+  "fulfilled",
+  "delivered",
+  "cancelled",
+] as const;
+
+export type ArtisanRequestStatus = (typeof ARTISAN_REQUEST_STATUSES)[number];
+
 interface IArtisanRequest {
     name: string;
     email: string;
@@ -7,6 +17,9 @@ interface IArtisanRequest {
     address: string;
     problem: string;
     title: string;
+    user_id?: string | null;
+    status: ArtisanRequestStatus;
+    admin_notes?: string;
     createdAt?: Date;
 }
 
@@ -17,6 +30,13 @@ const artisanRequestSchema = new Schema<IArtisanRequest>({
     problem: { type: String, required: true },
     address: { type: String, required: true },
     title: { type: String, required: true },
+    user_id: { type: String, required: false, default: null },
+    status: {
+      type: String,
+      enum: ARTISAN_REQUEST_STATUSES,
+      default: "pending",
+    },
+    admin_notes: { type: String, required: false, default: "" },
 }, { timestamps: true });
 
 const ArtisanRequest = model<IArtisanRequest>("ArtisanRequest", artisanRequestSchema);

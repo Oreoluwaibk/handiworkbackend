@@ -1,0 +1,115 @@
+{
+  "info": {
+    "_postman_id": "a4c8e1d2-7b9f-4e3a-9c12-handikorkuser01",
+    "name": "handikork",
+    "description": "Handiwork backend API collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "admin_key",
+      "value": ""
+    },
+    {
+      "key": "user_email",
+      "value": "user@example.com"
+    }
+  ],
+  "item": [
+    {
+      "name": "user",
+      "item": [
+        {
+          "name": "Reactivate User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{admin_key}}",
+                "description": "ADMIN_API_KEY or ADMIN_RESET_KEY"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/user/reactivate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "reactivate"
+              ]
+            },
+            "description": "Reactivate a deactivated user by setting `is_deleted` from `true` to `false`.\n\nRequires admin key via `x-admin-key` header or `confirm_key` in the body.\nDoes not use the user JWT, so a deactivated account can still be restored."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-admin-key",
+                    "value": "{{admin_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{user_email}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/user/reactivate",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "reactivate"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"User has been reactivated!\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

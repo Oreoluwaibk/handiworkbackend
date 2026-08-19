@@ -283,6 +283,36 @@ userRouter
     });
   }
 })
+.put("/reactivate", authentication, async (req: Request, res: Response) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: "email is required" });
+  }
+
+  try {
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    if (!user.is_deleted) {
+      return res.status(400).json({ message: "User is already active." });
+    }
+
+    user.is_deleted = false;
+    await user.save();
+
+    return res.status(200).json({
+      message: "User has been reactivated!",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: `This user could not be reactivated - ${error}`,
+    });
+  }
+})
 .delete("/", authentication, async (req: Request, res: Response) => {
   const { email, is_active } = (req as any).user;
 

@@ -1,5 +1,6 @@
 
 import { Schema, model } from "mongoose";
+import { toPipelineStatus } from "../utils/jobStatus";
 
 export interface IQuote {
     title: string;
@@ -41,6 +42,13 @@ const quoteSchema = new Schema<IQuote>({
     status: {required: false, type: String, default: "pending"},
     amount: {required: false, type: Number, default: 0},
 }, { timestamps: true })
+
+quoteSchema.virtual("pipeline_status").get(function () {
+    return toPipelineStatus(this.status);
+});
+
+quoteSchema.set("toJSON", { virtuals: true });
+quoteSchema.set("toObject", { virtuals: true });
 
 export { quoteSchema }
 const Quotes = model<IQuote>("Quote", quoteSchema);

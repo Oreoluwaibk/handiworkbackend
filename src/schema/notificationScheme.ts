@@ -5,7 +5,8 @@ export type NotificationType =
   | "quote"
   | "transaction"
   | "subscription"
-  | "chat";
+  | "chat"
+  | "artisan_request";
 
 interface INotification {
   title: string;
@@ -23,7 +24,7 @@ const notificationSchema = new Schema<INotification>(
     user_id: { required: true, type: String },
     type: {
       type: String,
-      enum: ["notification", "quote", "transaction", "subscription", "chat"],
+      enum: ["notification", "quote", "transaction", "subscription", "chat", "artisan_request"],
       default: "notification",
     },
     is_read: { type: Boolean, default: false },

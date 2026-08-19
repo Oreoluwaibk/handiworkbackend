@@ -3,6 +3,7 @@ import express from 'express';
 import { authentication } from '../middleware/authentication';
 import Wallet from '../schema/walletSchema';
 import Transaction from '../schema/transactionSchema';
+import { isInflow, isOutflow, sumBy } from '../utils/finance';
 
 const walletRouter = express.Router();
 
@@ -33,19 +34,15 @@ walletRouter.get('/stats', authentication, async (req, res) => {
 
     const transactions = await Transaction.find({ user_id: user._id });
 
-    const totalDeposits = transactions
-      .filter(t => t.type === 'deposit')
-      .reduce((acc, curr) => acc + Number(curr.amount), 0);
-
-    const totalWithdrawals = transactions
-      .filter(t => t.type === 'withdraw' || t.type === 'debit')
-      .reduce((acc, curr) => acc + Number(curr.amount), 0);
+    const totalDeposits = sumBy(transactions, isInflow);
+    const totalWithdrawals = sumBy(transactions, isOutflow);
 
     res.status(200).json({
       balance: wallet.balance,
       totalDeposits,
       totalWithdrawals,
-    //   transactions
+      inflow: totalDeposits,
+      outflow: totalWithdrawals,
     });
   } catch (error: any) {
     res.status(500).json({ message: error?.message });

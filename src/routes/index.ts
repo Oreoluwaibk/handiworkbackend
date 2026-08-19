@@ -13,7 +13,24 @@ import uploadRouter from "./upload";
 import walletRouter from "./wallet";
 import transactionRouter from "./transactions";
 import bankRouter from "./bank";
+import adminRouter from "./admin";
 const router = Router();
+
+router.use("/auth", authRouter);
+router.use("/category", categoryRouter);
+router.use("/skill", skillRouter);
+router.use("/support", supportRouter);
+router.use("/notification", notificationRouter);
+router.use("/user", userRouter);
+router.use("/vendor", vendorRouter);
+router.use("/quotes", quoteRouter);
+router.use("/reviews", reviewRouter);
+router.use("/messages", messageRouter);
+router.use('/upload', uploadRouter);
+router.use('/wallet', walletRouter);
+router.use('/transactions', transactionRouter);
+router.use('/bank', bankRouter);
+router.use("/admin", adminRouter);
 
 router.use("/auth", authRouter);
 router.use("/category", categoryRouter);

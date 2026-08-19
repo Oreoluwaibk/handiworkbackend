@@ -11,6 +11,7 @@ export type SafeTokenUser = {
   first_name?: string;
   last_name?: string;
   phone_number?: string;
+  is_admin?: boolean;
 };
 
 export const createToken = (user: SafeTokenUser) => {
@@ -24,6 +25,7 @@ export const createToken = (user: SafeTokenUser) => {
     first_name: user.first_name,
     last_name: user.last_name,
     phone_number: user.phone_number,
+    is_admin: user.is_admin,
   };
 
   return sign(payload, privateKey, { expiresIn: "30d" });
