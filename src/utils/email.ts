@@ -3,8 +3,10 @@ import dns from "dns";
 import fs from "fs-extra";
 import Handlebars from "handlebars";
 import nodemailer, { Transporter } from "nodemailer";
+import axios from "axios";
 import { Resend } from "resend";
 import { isNetworkError } from "./network";
+import { sendViaGmailApi } from "./gmailApi";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -74,7 +76,7 @@ function getResend() {
   return resendClient;
 }
 
-async function sendViaGmail(to: string, subject: string, html: string) {
+async function sendViaGmailSmtp(to: string, subject: string, html: string) {
   const ports: Array<465 | 587> = [587, 465];
   let lastError: any;
 
@@ -105,6 +107,14 @@ async function sendViaGmail(to: string, subject: string, html: string) {
   throw lastError;
 }
 
+async function sendViaGmail(to: string, subject: string, html: string) {
+  if (process.env.GMAIL_REFRESH_TOKEN?.trim() || process.env.RENDER) {
+    await sendViaGmailApi(to, subject, html, gmailFromAddress());
+    return;
+  }
+  await sendViaGmailSmtp(to, subject, html);
+}
+
 function extractEmail(value: string) {
   const match = value.match(/<([^>]+)>/);
   return (match ? match[1] : value).trim().toLowerCase();
@@ -122,6 +132,53 @@ function resendFromAddress() {
 
   if (configured.includes("<")) return configured;
   return `QuikWrk <${configured}>`;
+}
+
+function smtpAllowed() {
+  if (process.env.DISABLE_SMTP === "true") return false;
+  return Boolean(process.env.SMTP_EMAIL?.trim() && process.env.SMTP_PASSWORD?.trim());
+}
+
+function sendgridFromAddress() {
+  const configured = process.env.FROM_EMAIL?.trim();
+  if (configured) {
+    const email = extractEmail(configured);
+    if (email && !email.includes("resend.dev")) {
+      return { email, name: "QuikWrk" };
+    }
+  }
+
+  const smtpUser = process.env.SMTP_EMAIL?.trim();
+  if (smtpUser) {
+    return { email: smtpUser, name: "QuikWrk" };
+  }
+
+  throw new Error("FROM_EMAIL or SMTP_EMAIL is required for SendGrid");
+}
+
+async function sendViaSendGrid(to: string, subject: string, html: string) {
+  const apiKey = process.env.SENDGRID_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("SENDGRID_API_KEY is not configured");
+  }
+
+  const from = sendgridFromAddress();
+  await axios.post(
+    "https://api.sendgrid.com/v3/mail/send",
+    {
+      personalizations: [{ to: [{ email: to }] }],
+      from,
+      subject,
+      content: [{ type: "text/html", value: html }],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 15000,
+    }
+  );
 }
 
 function gmailFromAddress() {
@@ -152,6 +209,10 @@ async function sendViaResend(to: string, subject: string, html: string) {
   return data;
 }
 
+function emailProvider() {
+  return (process.env.EMAIL_PROVIDER || "auto").trim().toLowerCase();
+}
+
 async function sendEmail({
   to,
   subject,
@@ -165,17 +226,60 @@ async function sendEmail({
     throw new Error("Email recipient is missing");
   }
 
+  const provider = emailProvider();
+  const errors: string[] = [];
+
+  if (provider === "gmail") {
+    if (!smtpAllowed()) {
+      throw new Error("EMAIL_PROVIDER=gmail requires SMTP_EMAIL and SMTP_PASSWORD");
+    }
+    await sendViaGmail(to, subject, html);
+    console.log(`Email sent via Gmail SMTP to ${to}`);
+    return;
+  }
+
+  if (provider === "sendgrid") {
+    await sendViaSendGrid(to, subject, html);
+    console.log(`Email sent via SendGrid to ${to}`);
+    return;
+  }
+
+  if (provider === "resend") {
+    const result = await sendViaResend(to, subject, html);
+    console.log(`Email sent via Resend to ${to}`);
+    return result;
+  }
+
   if (process.env.RESEND_API_KEY?.trim()) {
     try {
-      return await sendViaResend(to, subject, html);
+      const result = await sendViaResend(to, subject, html);
+      console.log(`Email sent via Resend to ${to}`);
+      return result;
     } catch (error: any) {
-      console.warn(
-        `Resend failed (${error.message}). Falling back to Gmail SMTP.`
-      );
+      errors.push(`Resend: ${error.message}`);
+      console.warn(`Resend failed (${error.message}). Trying next provider.`);
     }
   }
 
-  await sendViaGmail(to, subject, html);
+  if (process.env.SENDGRID_API_KEY?.trim()) {
+    try {
+      await sendViaSendGrid(to, subject, html);
+      console.log(`Email sent via SendGrid to ${to}`);
+      return;
+    } catch (error: any) {
+      const detail = error.response?.data?.errors?.[0]?.message || error.message;
+      errors.push(`SendGrid: ${detail}`);
+      console.warn(`SendGrid failed (${detail}). Falling back to Gmail SMTP.`);
+    }
+  }
+
+  if (smtpAllowed()) {
+    await sendViaGmail(to, subject, html);
+    console.log(`Email sent via Gmail SMTP to ${to}`);
+    return;
+  }
+
+  throw new Error(errors.join(" | ") || "No email provider is configured");
 }
 
 export async function sendWelcomeEmail(userEmail: string, userName: string): Promise<void> {
