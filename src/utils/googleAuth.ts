@@ -24,22 +24,43 @@ export async function exchangeGoogleAuthCode(code?: string) {
     process.env.GOOGLE_OAUTH_REDIRECT_URI ||
     "https://handiworkbackend.onrender.com/api/auth/google/callback";
 
+  console.log("[GoogleAuth] exchange code start", {
+    hasCode: Boolean(code),
+    hasClientId: Boolean(clientId),
+    hasClientSecret: Boolean(clientSecret),
+    redirectUri,
+  });
+
   if (!code) {
+    console.log("[GoogleAuth] exchange failed: missing code");
     throw Object.assign(new Error("Google authorization code is required"), { status: 400 });
   }
 
   if (!clientId || !clientSecret) {
+    console.log("[GoogleAuth] exchange failed: missing GOOGLE_CLIENT_IDS or GOOGLE_CLIENT_SECRET");
     throw Object.assign(new Error("GOOGLE_CLIENT_SECRET is not configured"), { status: 500 });
   }
 
-  const client = new OAuth2Client(clientId, clientSecret, redirectUri);
-  const { tokens } = await client.getToken(code);
+  try {
+    const client = new OAuth2Client(clientId, clientSecret, redirectUri);
+    const { tokens } = await client.getToken(code);
+    console.log("[GoogleAuth] exchange success", {
+      hasIdToken: Boolean(tokens.id_token),
+      hasAccessToken: Boolean(tokens.access_token),
+    });
 
-  if (!tokens.id_token) {
-    throw Object.assign(new Error("Google did not return an ID token"), { status: 401 });
+    if (!tokens.id_token) {
+      throw Object.assign(new Error("Google did not return an ID token"), { status: 401 });
+    }
+
+    return tokens.id_token;
+  } catch (error: any) {
+    console.error("[GoogleAuth] exchange Google token error", {
+      message: error.message,
+      response: error.response?.data,
+    });
+    throw error;
   }
-
-  return tokens.id_token;
 }
 
 export async function verifyGoogleIdToken(idToken?: string): Promise<GoogleProfile> {

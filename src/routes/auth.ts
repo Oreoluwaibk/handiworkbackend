@@ -12,15 +12,17 @@ import { verifyGoogleIdToken, exchangeGoogleAuthCode } from "../utils/googleAuth
 
 function sendGoogleAppRedirect(res: Response, params: Record<string, string>) {
   const appUrl = `quikwrk://oauthredirect?${new URLSearchParams(params).toString()}`;
+  const hasError = Boolean(params.error);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!DOCTYPE html>
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Signing in to QuikWrk</title>
+    <title>${hasError ? "Google sign-in failed" : "Signing in to QuikWrk"}</title>
   </head>
-  <body style="font-family: sans-serif; padding: 24px; text-align: center;">
-    <p>Signing you in to QuikWrk...</p>
+  <body style="font-family: sans-serif; padding: 24px; text-align: center; background: #fff; color: #111;">
+    <p>${hasError ? String(params.error).replace(/[<>&]/g, "") : "Signing you in to QuikWrk..."}</p>
+    <p><a href="${appUrl.replace(/"/g, "&quot;")}">Return to QuikWrk</a></p>
     <script>
       window.location.replace(${JSON.stringify(appUrl)});
     </script>
@@ -203,6 +205,10 @@ authRouter
 })
 .post("/google", async (req: Request, res: Response) => {
   const { idToken, expoPushToken, device } = req.body;
+  console.log("[GoogleAuth] POST /auth/google", {
+    hasIdToken: Boolean(idToken),
+    hasDevice: Boolean(device),
+  });
 
   try {
     const profile = await verifyGoogleIdToken(idToken);
@@ -220,6 +226,7 @@ authRouter
     }
 
     if (!user) {
+      console.log("[GoogleAuth] creating user from Google profile", { email: normalizedEmail });
       user = await User.create({
         first_name: profile.first_name,
         last_name: profile.last_name,
@@ -241,6 +248,10 @@ authRouter
       });
       await ensureWallet(user._id.toString());
     } else {
+      console.log("[GoogleAuth] existing user found", {
+        email: user.email,
+        hasGoogleId: Boolean(user.google_id),
+      });
       if (!user.google_id) user.google_id = profile.google_id;
       if (!user.picture && profile.picture) user.picture = profile.picture;
       if (!user.first_name && profile.first_name) user.first_name = profile.first_name;
@@ -258,6 +269,7 @@ authRouter
       });
     }
 
+    console.log("[GoogleAuth] POST /auth/google success", { email: user.email });
     return res.status(200).json({
       success: true,
       message: "Google sign-in successful",
@@ -265,7 +277,10 @@ authRouter
       token: createSessionToken(user),
     });
   } catch (error: any) {
-    console.error("Google auth error:", error);
+    console.error("[GoogleAuth] POST /auth/google failed", {
+      message: error.message,
+      status: error.status,
+    });
     return res.status(error.status || 401).json({
       success: false,
       message: error.message || "Unable to sign in with Google",
@@ -279,7 +294,16 @@ authRouter
   const errorDescription =
     typeof req.query.error_description === "string" ? req.query.error_description : "";
 
+  console.log("[GoogleAuth] GET /auth/google/callback", {
+    hasCode: Boolean(code),
+    hasState: Boolean(state),
+    error: error || null,
+    errorDescription: errorDescription || null,
+    queryKeys: Object.keys(req.query || {}),
+  });
+
   if (error) {
+    console.log("[GoogleAuth] Google returned error to callback", { error, errorDescription });
     return sendGoogleAppRedirect(res, {
       error: errorDescription || error,
       state,
@@ -287,6 +311,7 @@ authRouter
   }
 
   if (!code) {
+    console.log("[GoogleAuth] callback missing authorization code");
     return sendGoogleAppRedirect(res, {
       error: "Google sign-in did not return an authorization code",
       state,
@@ -295,9 +320,14 @@ authRouter
 
   try {
     const idToken = await exchangeGoogleAuthCode(code);
+    console.log("[GoogleAuth] callback exchanging code succeeded, redirecting to app");
     return sendGoogleAppRedirect(res, { id_token: idToken, state });
   } catch (err: any) {
-    console.error("Google callback error:", err);
+    console.error("[GoogleAuth] callback exchange failed", {
+      message: err.message,
+      status: err.status,
+      response: err.response?.data,
+    });
     return sendGoogleAppRedirect(res, {
       error: err.message || "Unable to complete Google sign-in",
       state,
