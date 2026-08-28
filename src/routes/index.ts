@@ -14,8 +14,10 @@ import walletRouter from "./wallet";
 import transactionRouter from "./transactions";
 import bankRouter from "./bank";
 import adminRouter from "./admin";
+import appRouter from "./app";
 const router = Router();
 
+router.use("/app", appRouter);
 router.use("/auth", authRouter);
 router.use("/category", categoryRouter);
 router.use("/skill", skillRouter);

@@ -24,6 +24,8 @@ import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from
 import { writeAuditLog } from "../utils/auditLog";
 import { refundQuoteEscrow } from "../utils/quoteEscrow";
 import AuditLog from "../schema/auditLogSchema";
+import AppVersion from "../schema/appVersionSchema";
+import { getOrCreateAppVersionConfig } from "./app";
 
 const adminRouter = Router();
 const saltRounds = 10;
@@ -1343,6 +1345,68 @@ adminRouter.get("/audit-logs", async (req: Request, res: Response) => {
       page,
       total,
       pages: Math.ceil(total / Math.max(limit, 1)),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+adminRouter.get("/app-version", async (_req: Request, res: Response) => {
+  try {
+    const config = await getOrCreateAppVersionConfig();
+    return res.status(200).json({
+      message: "Success",
+      config,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+adminRouter.put("/app-version", async (req: Request, res: Response) => {
+  try {
+    const admin = (req as any).user;
+    const config = await getOrCreateAppVersionConfig();
+    const {
+      latest_version,
+      min_version,
+      force_update,
+      title,
+      message,
+      android_store_url,
+      ios_store_url,
+      enabled,
+    } = req.body || {};
+
+    if (latest_version !== undefined) config.latest_version = String(latest_version).trim();
+    if (min_version !== undefined) config.min_version = String(min_version).trim();
+    if (force_update !== undefined) config.force_update = Boolean(force_update);
+    if (title !== undefined) config.title = String(title).trim();
+    if (message !== undefined) config.message = String(message).trim();
+    if (android_store_url !== undefined) config.android_store_url = String(android_store_url).trim();
+    if (ios_store_url !== undefined) config.ios_store_url = String(ios_store_url).trim();
+    if (enabled !== undefined) config.enabled = Boolean(enabled);
+
+    if (!config.latest_version || !config.min_version) {
+      return res.status(400).json({ message: "latest_version and min_version are required" });
+    }
+
+    await config.save();
+
+    await writeAuditLog({
+      action: "app_version_updated",
+      adminId: admin._id.toString(),
+      details: {
+        latest_version: config.latest_version,
+        min_version: config.min_version,
+        force_update: config.force_update,
+        enabled: config.enabled,
+      },
+    });
+
+    return res.status(200).json({
+      message: "App version settings updated",
+      config,
     });
   } catch (error: any) {
     return res.status(500).json({ message: error.message });
