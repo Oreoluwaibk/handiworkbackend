@@ -390,7 +390,7 @@ quoteRouter
 
     if (!CANCELLABLE_ESCROW_STATUSES.includes(quote.status as any)) {
       res.status(400).json({
-        message: "Only accepted or in-progress quotes can be cancelled before verification",
+        message: "Only accepted quotes can be cancelled before work starts",
       });
       return;
     }

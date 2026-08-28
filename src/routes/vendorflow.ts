@@ -496,6 +496,20 @@ vendorRouter
       });
     }
 
+    if (!user.is_vendor && !user.subscription?.active) {
+      const existingRequestCount = await ArtisanRequest.countDocuments({
+        user_id: user._id.toString(),
+      });
+
+      if (existingRequestCount >= 1) {
+        return res.status(403).json({
+          success: false,
+          requires_subscription: true,
+          message: "Subscribe to request more artisans. You have used your free request.",
+        });
+      }
+    }
+
     if (!user.area) {
       return res.status(400).json({
         success: false,

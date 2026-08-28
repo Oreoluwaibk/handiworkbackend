@@ -4,7 +4,7 @@ import Transaction from "../schema/transactionSchema";
 import { processTransaction } from "./ledger";
 
 export const ACTIVE_ESCROW_STATUSES = ["accepted", "in_progress", "completed"] as const;
-export const CANCELLABLE_ESCROW_STATUSES = ["accepted", "in_progress"] as const;
+export const CANCELLABLE_ESCROW_STATUSES = ["accepted"] as const;
 export const PLATFORM_COMMISSION_RATE = 0.05;
 
 export function escrowReference(quoteId: string) {
