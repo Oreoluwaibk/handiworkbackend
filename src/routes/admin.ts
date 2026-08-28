@@ -15,12 +15,15 @@ import { createToken } from "../utils/tokens";
 import { getPagination } from "../utils/pagination";
 import { adminAuthentication } from "../middleware/adminAuthentication";
 import { requireAdminKey } from "../middleware/adminAuth";
-import { processTransaction } from "./transactions";
+import { processTransaction } from "../utils/ledger";
 import { isInflow, isOutflow, sumBy } from "../utils/finance";
 import { pipelineCounts, quoteStatusQuery, toQuoteWorkflowStatus } from "../utils/jobStatus";
 import { saveNotifcation } from "../utils/saveNotification";
 import { sendArtisanRequestUpdateEmail, getArtisanRequestStatusCopy } from "../utils/email";
 import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
+import { writeAuditLog } from "../utils/auditLog";
+import { refundQuoteEscrow } from "../utils/quoteEscrow";
+import AuditLog from "../schema/auditLogSchema";
 
 const adminRouter = Router();
 const saltRounds = 10;
@@ -1055,11 +1058,28 @@ adminRouter.put("/wallets/:userId", async (req: Request, res: Response) => {
     const wallet = await Wallet.findOne({ user_id: req.params.userId });
     if (!wallet) return res.status(404).json({ message: "Wallet not found" });
 
+    const admin = (req as any).user;
+    const previousActive = wallet.is_active;
+
     if (typeof req.body.is_active === "boolean") {
       wallet.is_active = req.body.is_active;
     }
 
     await wallet.save();
+
+    if (typeof req.body.is_active === "boolean" && previousActive !== wallet.is_active) {
+      await writeAuditLog({
+        action: wallet.is_active ? "wallet_unfrozen" : "wallet_frozen",
+        adminId: admin._id.toString(),
+        targetUserId: req.params.userId,
+        details: {
+          previous_is_active: previousActive,
+          is_active: wallet.is_active,
+          reason: req.body.reason || null,
+        },
+      });
+    }
+
     return res.status(200).json({ message: "Wallet updated", wallet });
   } catch (error: any) {
     return res.status(500).json({ message: error.message });
@@ -1067,21 +1087,88 @@ adminRouter.put("/wallets/:userId", async (req: Request, res: Response) => {
 });
 
 adminRouter.post("/wallets/:userId/adjust", async (req: Request, res: Response) => {
-  const { type, amount, description } = req.body;
+  const { type, amount, description, reason } = req.body;
 
   if (!["deposit", "debit", "withdraw", "reverse"].includes(type)) {
     return res.status(400).json({ message: "Invalid transaction type" });
   }
 
   try {
+    const admin = (req as any).user;
+    const parsedAmount = parseFloat(amount);
     const transaction = await processTransaction({
       user_id: req.params.userId,
       type,
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       description: description || `Admin ${type}`,
     });
 
+    await writeAuditLog({
+      action: "wallet_adjust",
+      adminId: admin._id.toString(),
+      targetUserId: req.params.userId,
+      details: {
+        type,
+        amount: parsedAmount,
+        description: description || `Admin ${type}`,
+        reason: reason || null,
+        transaction_id: transaction._id.toString(),
+      },
+    });
+
     return res.status(201).json({ message: "Wallet adjusted", transaction });
+  } catch (error: any) {
+    return res.status(400).json({ message: error.message });
+  }
+});
+
+adminRouter.post("/quotes/:id/refund-escrow", async (req: Request, res: Response) => {
+  const { reason } = req.body;
+
+  try {
+    const admin = (req as any).user;
+    const quote = await Quotes.findById(req.params.id);
+    if (!quote) return res.status(404).json({ message: "Quote not found" });
+
+    if (!["accepted", "in_progress", "completed"].includes(quote.status)) {
+      return res.status(400).json({
+        message: "Escrow can only be refunded for accepted, in-progress, or completed quotes",
+      });
+    }
+
+    const quoteAmount = parseFloat(quote.amount?.toString() || "0");
+    if (quoteAmount <= 0) {
+      return res.status(400).json({ message: "Quote has no escrow amount to refund" });
+    }
+
+    const refund = await refundQuoteEscrow(req.params.id, quote.requester.id, quoteAmount);
+
+    quote.status = "cancelled";
+    await quote.save();
+
+    const vendor = await User.findById(quote.vendor.id);
+    if (vendor) {
+      vendor.is_active = false;
+      await vendor.save();
+    }
+
+    await writeAuditLog({
+      action: "quote_escrow_refund",
+      adminId: admin._id.toString(),
+      targetUserId: quote.requester.id,
+      details: {
+        quote_id: quote._id.toString(),
+        amount: quoteAmount,
+        reason: reason || null,
+        refund_transaction_id: refund._id.toString(),
+      },
+    });
+
+    return res.status(200).json({
+      message: "Escrow refunded successfully",
+      quote,
+      refund,
+    });
   } catch (error: any) {
     return res.status(400).json({ message: error.message });
   }
@@ -1199,6 +1286,64 @@ adminRouter.get("/catalog", async (_req: Request, res: Response) => {
     ]);
 
     return res.status(200).json({ message: "Success", categories, skills });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+adminRouter.get("/audit-logs", async (req: Request, res: Response) => {
+  try {
+    const { action, search } = req.query;
+    const { page, limit, skip } = getPagination(req);
+    const query: Record<string, any> = {};
+
+    if (action) query.action = action;
+
+    if (search) {
+      const regex = new RegExp(escapeRegex(String(search)), "i");
+      const matchedUsers = await User.find({
+        $or: [{ first_name: regex }, { last_name: regex }, { email: regex }],
+      }).select("_id");
+      query.$or = [
+        { action: regex },
+        { admin_id: { $in: matchedUsers.map((u) => u._id) } },
+        { target_user_id: { $in: matchedUsers.map((u) => u._id) } },
+      ];
+    }
+
+    const [logs, total] = await Promise.all([
+      AuditLog.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      AuditLog.countDocuments(query),
+    ]);
+
+    const userIds = [
+      ...new Set(
+        logs
+          .flatMap((log) => [log.admin_id?.toString(), log.target_user_id?.toString()])
+          .filter(Boolean)
+      ),
+    ];
+
+    const users = await User.find({
+      _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) },
+    }).select("first_name last_name email");
+
+    const userMap = users.reduce((acc, user) => {
+      acc[user._id.toString()] = user;
+      return acc;
+    }, {} as Record<string, any>);
+
+    return res.status(200).json({
+      message: "Success",
+      logs: logs.map((log) => ({
+        ...log.toObject(),
+        admin: log.admin_id ? userMap[log.admin_id.toString()] || null : null,
+        target_user: log.target_user_id ? userMap[log.target_user_id.toString()] || null : null,
+      })),
+      page,
+      total,
+      pages: Math.ceil(total / Math.max(limit, 1)),
+    });
   } catch (error: any) {
     return res.status(500).json({ message: error.message });
   }

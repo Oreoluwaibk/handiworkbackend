@@ -9,6 +9,7 @@ import { authentication, AuthenticatedRequest } from "../middleware/authenticati
 import { applyDeviceUpdate } from "../utils/device";
 import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
 import { verifyGoogleIdToken, exchangeGoogleAuthCode } from "../utils/googleAuth";
+import { authLimiter } from "../middleware/rateLimit";
 
 function sendGoogleAppRedirect(res: Response, params: Record<string, string>) {
   const appUrl = `quikwrk://oauthredirect?${new URLSearchParams(params).toString()}`;
@@ -55,6 +56,8 @@ async function ensureWallet(userId: string) {
 
 const saltRounds = 10;
 const authRouter = Router();
+
+authRouter.use(authLimiter);
 
 authRouter
 .post("/register", async (req: Request, res: Response) => {

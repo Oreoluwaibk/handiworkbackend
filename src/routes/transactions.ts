@@ -10,82 +10,17 @@ import User from '../schema/userSchema';
 import { saveNotifcation } from '../utils/saveNotification';
 import { confirmUserPassword } from '../utils/password';
 import { requesterHasActiveEscrow } from '../utils/quoteEscrow';
+import { processTransaction, validateTransactionAmount } from '../utils/ledger';
+import { verifyPayment } from '../utils/paystack';
+import { normalizeEmail } from '../utils/authIdentity';
+import { moneyLimiter } from '../middleware/rateLimit';
 
 const transactionRouter = express.Router();
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY as string;
 const PAYSTACK_BASE_URL = "https://api.paystack.co";
 
-type TransactionType = 'deposit' | 'withdraw' | 'debit' | 'reverse';
-
-export async function processTransaction({
-  user_id,
-  type,
-  amount,
-  description,
-  status = "completed",
-  reference,
-}: {
-  user_id: string | any;
-  type: TransactionType;
-  amount: number;
-  description?: string;
-  status?: string;
-  reference?: string;
-}) {
-  if (reference) {
-    const existing = await Transaction.findOne({ reference });
-    if (existing) return existing;
-  }
-
-  const wallet = await Wallet.findOne({ user_id });
-  if (!wallet || !wallet.is_active) throw new Error('Wallet not available');
-
-  const isDebit = type === 'withdraw' || type === 'debit';
-  const isCredit = type === 'deposit' || type === 'reverse';
-
-  if (isDebit && wallet.balance < amount) {
-    throw new Error('Insufficient balance');
-  }
-
-  const transaction = new Transaction({
-    user_id,
-    type,
-    amount,
-    description:
-      description ||
-      (type === 'deposit'
-        ? 'Wallet deposit'
-        : type === 'reverse'
-        ? 'Wallet reversal'
-        : 'Wallet withdrawal'),
-    status,
-    reference,
-  });
-
-  if (isCredit) {
-    wallet.balance += amount;
-  } else if (isDebit) {
-    wallet.balance -= amount;
-  }
-
-  await transaction.save();
-  await wallet.save();
-
-  if (status === 'completed') {
-    await saveNotifcation(
-      `Transaction - ${type}`,
-      `${amount} has been ${
-        isCredit ? 'credited to' : 'withdrawn from'
-      } your wallet`,
-      user_id,
-      'transaction',
-      transaction._id.toString()
-    );
-  }
-
-  return transaction;
-}
+transactionRouter.use(moneyLimiter);
 
 async function initializePayment({
   email,
@@ -97,14 +32,6 @@ async function initializePayment({
   const response = await axios.post(
     `${PAYSTACK_BASE_URL}/transaction/initialize`,
     { email, amount: amount * 100 },
-    { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
-  );
-  return response.data;
-}
-
-async function verifyPayment(reference: string) {
-  const response = await axios.get(
-    `${PAYSTACK_BASE_URL}/transaction/verify/${reference}`,
     { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
   );
   return response.data;
@@ -149,10 +76,13 @@ transactionRouter.post('/deposit', authentication, async (req, res) => {
     const passwordCheck = confirmUserPassword(dbUser, password);
     if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
+    const parsedAmount = parseFloat(amount);
+    validateTransactionAmount(parsedAmount);
+
     const transaction = await processTransaction({
       user_id,
       type: 'deposit',
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       description,
     });
     res.status(200).json(transaction);
@@ -169,9 +99,12 @@ transactionRouter.post('/deposit/paystack', authentication, async (req, res) => 
     const passwordCheck = confirmUserPassword(user, password);
     if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
+    const parsedAmount = parseFloat(amount);
+    validateTransactionAmount(parsedAmount);
+
     const initResponse = await initializePayment({
       email: user.email,
-      amount: parseFloat(amount),
+      amount: parsedAmount,
     });
 
     res.status(200).json({
@@ -198,6 +131,12 @@ transactionRouter.get('/deposit/verify/:reference', authentication, async (req, 
 
     if (verifyResponse.data.status !== 'success') {
       return res.status(400).json({ message: 'Payment not successful' });
+    }
+
+    const payerEmail = normalizeEmail(verifyResponse.data.customer?.email);
+    const userEmail = normalizeEmail(user.email);
+    if (!payerEmail || payerEmail !== userEmail) {
+      return res.status(403).json({ message: 'Payment does not belong to this account' });
     }
 
     const { amount } = verifyResponse.data;
@@ -267,6 +206,17 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
   const user = (req as any).user;
 
   try {
+    const existingUser = await User.findById(user._id);
+    if (
+      existingUser?.subscription?.reference === reference &&
+      existingUser.subscription.active
+    ) {
+      return res.status(200).json({
+        message: "Subscription already active",
+        plan: existingUser.subscription.plan_name,
+      });
+    }
+
     const verifyResponse = await verifyPayment(reference);
     const data = verifyResponse.data;
 
@@ -274,12 +224,17 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
       return res.status(400).json({ message: "Subscription not successful" });
     }
 
+    const payerEmail = normalizeEmail(data.customer?.email);
+    const userEmail = normalizeEmail(user.email);
+    if (!payerEmail || payerEmail !== userEmail) {
+      return res.status(403).json({ message: "Payment does not belong to this account" });
+    }
+
     const planName = data.plan_object?.name
       ? `${data.plan_object.name} Plan`
       : "Basic Plan";
     const amount = (data.amount || 0) / 100;
 
-    const existingUser = await User.findById(user._id);
     let referralCode = existingUser?.referral_code;
 
     if (!referralCode) {
@@ -343,132 +298,6 @@ transactionRouter.get('/subscription', authentication, async (req, res) => {
   }
 });
 
-transactionRouter.post(
-  '/paystack/webhook',
-  express.json({ type: '*/*' }),
-  async (req, res) => {
-    try {
-      const hash = crypto
-        .createHmac('sha512', PAYSTACK_SECRET)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
-
-      if (hash !== req.headers['x-paystack-signature']) {
-        return res.status(401).json({ message: 'Invalid signature' });
-      }
-
-      const event = req.body;
-
-      if (event.event === 'charge.success') {
-        const { reference } = event.data;
-
-        const existing = await Transaction.findOne({ reference });
-        if (!existing) {
-          try {
-            const verifyResponse = await verifyPayment(reference);
-
-            if (verifyResponse.data.status === 'success') {
-              const { amount, customer } = verifyResponse.data;
-              const user = await User.findOne({ email: customer.email });
-
-              if (user) {
-                await processTransaction({
-                  user_id: user._id,
-                  type: 'deposit',
-                  amount: amount / 100,
-                  description: `Paystack deposit (Ref: ${reference})`,
-                  reference,
-                });
-              }
-            }
-          } catch (err: any) {
-            console.error('Paystack verification failed:', err.message);
-          }
-        }
-      }
-
-      if (
-        event.event === "subscription.create" ||
-        event.event === "invoice.create"
-      ) {
-        const { customer, plan, amount } = event.data;
-        const user = await User.findOne({ email: customer.email });
-
-        if (user) {
-          await User.findByIdAndUpdate(user._id, {
-            $set: {
-              "subscription.plan_name": plan.name,
-              "subscription.amount": amount / 100,
-              "subscription.active": true,
-              "subscription.renewed_at": new Date(),
-            },
-          });
-
-          await saveNotifcation(
-            "Subscription Renewed",
-            `Your ${plan.name} plan has been renewed.`,
-            user._id,
-            "subscription"
-          );
-        }
-      }
-
-      if (event.event === "transfer.success") {
-        const { reference, recipient, amount } = event.data;
-
-        const transaction = await Transaction.findOne({ reference });
-        if (transaction) {
-          transaction.status = "completed";
-          await transaction.save();
-        }
-
-        const user = await User.findOne({
-          "bank_details.recipient_code": recipient.recipient_code,
-        });
-
-        if (user) {
-          await saveNotifcation(
-            "Withdrawal Successful",
-            `₦${amount / 100} has been successfully transferred to your account.`,
-            user._id,
-            "transaction",
-            reference
-          );
-        }
-      }
-
-      if (event.event === "transfer.failed") {
-        const { reference, reason } = event.data;
-
-        const transaction = await Transaction.findOne({ reference });
-        if (transaction) {
-          transaction.status = "failed";
-          await transaction.save();
-
-          const wallet = await Wallet.findOne({ user_id: transaction.user_id });
-          if (wallet) {
-            wallet.balance += transaction.amount;
-            await wallet.save();
-          }
-
-          await saveNotifcation(
-            "Withdrawal Failed",
-            `Your withdrawal of ₦${transaction.amount} failed: ${reason}. The amount has been refunded to your wallet.`,
-            transaction.user_id,
-            "transaction",
-            transaction._id.toString()
-          );
-        }
-      }
-
-      res.sendStatus(200);
-    } catch (error: any) {
-      console.error("Paystack webhook error:", error.message);
-      res.status(500).json({ message: "Webhook handling failed", error: error.message });
-    }
-  }
-);
-
 transactionRouter.post("/admin/reset-wallets", requireAdminKey, async (req, res) => {
   try {
     const { clear_transactions } = req.body;
@@ -495,16 +324,20 @@ transactionRouter.post("/admin/reset-wallets", requireAdminKey, async (req, res)
 
 transactionRouter.post("/withdraw", authentication, async (req, res) => {
   const user = (req as any).user;
-  const { account_number, bank_code, amount, account_name, password } = req.body;
+  const { amount, password } = req.body;
 
   try {
     const passwordCheck = confirmUserPassword(user, password);
     if (!passwordCheck.ok) return res.status(passwordCheck.status).json({ message: passwordCheck.message });
 
     const withdrawalAmount = Number(amount);
+    validateTransactionAmount(withdrawalAmount);
 
-    if (withdrawalAmount <= 0) {
-      return res.status(400).json({ message: "Invalid withdrawal amount" });
+    const dbUser = await User.findById(user._id).select("bank_details");
+    if (!dbUser?.bank_details?.verified || !dbUser.bank_details.recipient_code) {
+      return res.status(400).json({
+        message: "Please verify your bank account before withdrawing",
+      });
     }
 
     const wallet = await Wallet.findOne({ user_id: user._id });
@@ -521,31 +354,12 @@ transactionRouter.post("/withdraw", authentication, async (req, res) => {
       return res.status(400).json({ message: "Insufficient wallet balance" });
     }
 
-    const recipientResponse = await axios.post(
-      "https://api.paystack.co/transferrecipient",
-      {
-        type: "nuban",
-        name: account_name,
-        account_number,
-        bank_code,
-        currency: "NGN",
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const recipientCode = recipientResponse.data.data.recipient_code;
-
     const transferResponse = await axios.post(
       "https://api.paystack.co/transfer",
       {
         source: "balance",
         amount: withdrawalAmount * 100,
-        recipient: recipientCode,
+        recipient: dbUser.bank_details.recipient_code,
         reason: "Wallet withdrawal",
       },
       {
@@ -598,4 +412,5 @@ transactionRouter.get('/:id', authentication, async (req, res) => {
   }
 });
 
+export { processTransaction };
 export default transactionRouter;

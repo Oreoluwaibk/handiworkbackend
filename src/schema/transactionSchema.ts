@@ -26,5 +26,7 @@ const transactionSchema = new Schema<ITransaction>(
   { timestamps: true }
 );
 
+transactionSchema.index({ reference: 1 }, { unique: true, sparse: true });
+
 const Transaction = model<ITransaction>("Transaction", transactionSchema);
 export default Transaction;

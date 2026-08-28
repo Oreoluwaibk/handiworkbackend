@@ -4,15 +4,19 @@ import User from "../schema/userSchema";
 import Quotes from "../schema/quoteSchema";
 import { getPagination } from "../utils/pagination";
 import { saveNotifcation } from "../utils/saveNotification";
-import { processTransaction } from "./transactions";
+import { processTransaction } from "../utils/ledger";
 import mongoose from "mongoose";
 import Wallet from "../schema/walletSchema";
 import { quoteStatusQuery } from "../utils/jobStatus";
 import {
+  CANCELLABLE_ESCROW_STATUSES,
+  escrowReference,
   platformCommissionAmount,
+  refundQuoteEscrow,
   syncArtisanRequestFromQuote,
   vendorPayoutAmount,
 } from "../utils/quoteEscrow";
+import { getPlatformUserId } from "../utils/platformWallet";
 
 const quoteRouter = Router();
 
@@ -85,6 +89,13 @@ quoteRouter
       return;
     }
 
+    if (quote.status !== "replied") {
+      res.status(400).json({
+        message: "Only replied quotes can be accepted",
+      });
+      return;
+    }
+
     const vendor = await User.findById(quote.vendor.id);
 
     if (!quote.amount) {
@@ -117,7 +128,7 @@ quoteRouter
       type: "debit",
       amount: quoteAmount,
       description: `Escrow hold for quote: ${quote.title}`,
-      reference: `quote-escrow-${id}`,
+      reference: escrowReference(id),
     });
 
     quote.status = "accepted";
@@ -313,6 +324,7 @@ quoteRouter
     const quoteAmount = parseFloat(quote.amount?.toString()!);
     const payout = vendorPayoutAmount(quoteAmount);
     const commission = platformCommissionAmount(quoteAmount);
+    const platformUserId = await getPlatformUserId();
 
     await saveNotifcation(
       "Quote verified!",
@@ -338,6 +350,16 @@ quoteRouter
       reference: `quote-verify-${id}-vendor`,
     });
 
+    if (commission > 0) {
+      await processTransaction({
+        user_id: platformUserId,
+        type: "deposit",
+        amount: commission,
+        description: `Platform commission for verified quote: ${quote.title}`,
+        reference: `quote-verify-${id}-commission`,
+      });
+    }
+
     await quote.save();
     await syncArtisanRequestFromQuote(quote, "delivered");
 
@@ -347,6 +369,70 @@ quoteRouter
     });
   } catch (error: any) {
     res.status(500).json({ message: `Unable to verify quote: ${error.message}` });
+  }
+})
+.put("/cancel/:id", authentication, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = (req as any).user;
+
+  try {
+    const quote = await Quotes.findById(id);
+
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
+
+    if (!isRequester(quote, user)) {
+      res.status(403).json({ message: "Only the requester can cancel this quote" });
+      return;
+    }
+
+    if (!CANCELLABLE_ESCROW_STATUSES.includes(quote.status as any)) {
+      res.status(400).json({
+        message: "Only accepted or in-progress quotes can be cancelled before verification",
+      });
+      return;
+    }
+
+    const quoteAmount = parseFloat(quote.amount?.toString() || "0");
+    if (quoteAmount > 0) {
+      await refundQuoteEscrow(id, quote.requester.id, quoteAmount);
+    }
+
+    const vendor = await User.findById(quote.vendor.id);
+    quote.status = "cancelled";
+
+    if (vendor) {
+      vendor.is_active = false;
+      await vendor.save();
+    }
+
+    await saveNotifcation(
+      "Quote cancelled",
+      `Quote for ${quote.title} has been cancelled and escrow refunded`,
+      quote.requester.id,
+      "quote",
+      quote.id
+    );
+
+    await saveNotifcation(
+      "Quote cancelled",
+      `Quote for ${quote.title} has been cancelled by ${quote.requester.name}`,
+      quote.vendor.id,
+      "quote",
+      quote.id
+    );
+
+    await quote.save();
+    await syncArtisanRequestFromQuote(quote, "declined");
+
+    res.status(200).json({
+      message: "Quote cancelled and escrow refunded successfully",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to cancel quote: ${error.message}` });
   }
 })
 .get("/vendor", authentication, async (req: Request, res: Response) => {

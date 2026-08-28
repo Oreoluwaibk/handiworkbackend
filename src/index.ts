@@ -14,6 +14,8 @@ import connectionToDatabase from './dbconfig/index';
 import router from './routes';
 import handleSocket from './utils/socketHandler';
 import { setSocketIo } from './utils/socketIo';
+import { handlePaystackWebhook } from './routes/paystackWebhook';
+import { webhookLimiter } from './middleware/rateLimit';
 
 const app: Application = express();
 const httpServer = createServer(app);
@@ -29,6 +31,12 @@ setSocketIo(io);
 handleSocket(io);
 
 app.use(cors());
+app.post(
+  '/api/transactions/paystack/webhook',
+  webhookLimiter,
+  express.raw({ type: 'application/json' }),
+  handlePaystackWebhook
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

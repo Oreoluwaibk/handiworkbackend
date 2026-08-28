@@ -4,6 +4,7 @@ export const JOB_PIPELINE_STATUSES = [
   "fulfilled",
   "delivered",
   "declined",
+  "cancelled",
 ] as const;
 
 export type JobPipelineStatus = (typeof JOB_PIPELINE_STATUSES)[number];
@@ -16,6 +17,7 @@ const QUOTE_TO_PIPELINE: Record<string, JobPipelineStatus> = {
   completed: "fulfilled",
   verified: "delivered",
   declined: "declined",
+  cancelled: "cancelled",
   in_progress: "in_progress",
   fulfilled: "fulfilled",
   delivered: "delivered",
@@ -27,6 +29,7 @@ const PIPELINE_TO_QUOTE: Record<string, string[]> = {
   fulfilled: ["completed"],
   delivered: ["verified"],
   declined: ["declined"],
+  cancelled: ["cancelled"],
 };
 
 const PIPELINE_TO_CANONICAL: Record<string, string> = {
@@ -35,6 +38,7 @@ const PIPELINE_TO_CANONICAL: Record<string, string> = {
   fulfilled: "completed",
   delivered: "verified",
   declined: "declined",
+  cancelled: "cancelled",
 };
 
 export function toPipelineStatus(status?: string | null): JobPipelineStatus {
@@ -60,6 +64,7 @@ export function pipelineCounts(rows: { _id: string | null; count: number }[]) {
     fulfilled: 0,
     delivered: 0,
     declined: 0,
+    cancelled: 0,
   };
 
   for (const row of rows) {
