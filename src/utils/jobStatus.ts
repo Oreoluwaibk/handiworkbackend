@@ -12,6 +12,7 @@ const QUOTE_TO_PIPELINE: Record<string, JobPipelineStatus> = {
   pending: "pending",
   replied: "pending",
   accepted: "in_progress",
+  assigned: "pending",
   completed: "fulfilled",
   verified: "delivered",
   declined: "declined",
@@ -22,7 +23,7 @@ const QUOTE_TO_PIPELINE: Record<string, JobPipelineStatus> = {
 
 const PIPELINE_TO_QUOTE: Record<string, string[]> = {
   pending: ["pending", "replied"],
-  in_progress: ["accepted"],
+  in_progress: ["accepted", "in_progress"],
   fulfilled: ["completed"],
   delivered: ["verified"],
   declined: ["declined"],

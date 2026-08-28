@@ -2,6 +2,7 @@ import { Schema, model } from "mongoose";
 
 export const ARTISAN_REQUEST_STATUSES = [
   "pending",
+  "assigned",
   "in_progress",
   "fulfilled",
   "delivered",
@@ -17,7 +18,11 @@ interface IArtisanRequest {
     address: string;
     problem: string;
     title: string;
+    skill_id?: string | null;
+    area?: string | null;
     user_id?: string | null;
+    quote_id?: string | null;
+    selected_bid_id?: string | null;
     status: ArtisanRequestStatus;
     admin_notes?: string;
     createdAt?: Date;
@@ -30,7 +35,11 @@ const artisanRequestSchema = new Schema<IArtisanRequest>({
     problem: { type: String, required: true },
     address: { type: String, required: true },
     title: { type: String, required: true },
+    skill_id: { type: String, required: false, default: null, index: true },
+    area: { type: String, required: false, default: null, index: true },
     user_id: { type: String, required: false, default: null },
+    quote_id: { type: String, required: false, default: null },
+    selected_bid_id: { type: String, required: false, default: null },
     status: {
       type: String,
       enum: ARTISAN_REQUEST_STATUSES,

@@ -5,6 +5,7 @@ import User from "../schema/userSchema";
 import Wallet from "../schema/walletSchema";
 import Transaction from "../schema/transactionSchema";
 import ArtisanRequest, { ARTISAN_REQUEST_STATUSES } from "../schema/artisanRequest";
+import ArtisanRequestBid from "../schema/artisanRequestBidSchema";
 import Support, { SUPPORT_STATUSES } from "../schema/supportSchema";
 import Quotes from "../schema/quoteSchema";
 import Review from "../schema/reviewSchema";
@@ -41,6 +42,8 @@ const USER_EDITABLE_FIELDS = [
   "is_verified",
   "is_recommended",
   "is_admin",
+  "vendor_type",
+  "primary_skill",
 ] as const;
 
 function escapeRegex(value: string) {
@@ -328,6 +331,7 @@ adminRouter.get("/stats", async (_req: Request, res: Response) => {
 
     const artisanStatus = {
       pending: 0,
+      assigned: 0,
       in_progress: 0,
       fulfilled: 0,
       delivered: 0,
@@ -388,6 +392,10 @@ adminRouter.get("/users", async (req: Request, res: Response) => {
 
     if (subscribed === "true") query["subscription.active"] = true;
     if (subscribed === "false") query["subscription.active"] = { $ne: true };
+
+    if (req.query.vendor_type === "artisan" || req.query.vendor_type === "vendor") {
+      query.vendor_type = req.query.vendor_type;
+    }
 
     Object.assign(query, searchFilter(search as string));
 
@@ -656,7 +664,15 @@ adminRouter.get("/artisan-requests", async (req: Request, res: Response) => {
     if (status) query.status = status;
     if (search) {
       const regex = new RegExp(escapeRegex(String(search)), "i");
-      query.$or = [{ name: regex }, { email: regex }, { phone: regex }, { title: regex }, { address: regex }];
+      query.$or = [
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { title: regex },
+        { address: regex },
+        { area: regex },
+        { problem: regex },
+      ];
     }
 
     const [requests, total, byStatus] = await Promise.all([
@@ -665,13 +681,59 @@ adminRouter.get("/artisan-requests", async (req: Request, res: Response) => {
       ArtisanRequest.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
     ]);
 
+    const requestIds = requests.map((item) => item._id.toString());
+    const bidCounts = await ArtisanRequestBid.aggregate([
+      { $match: { artisan_request_id: { $in: requestIds }, status: "pending" } },
+      { $group: { _id: "$artisan_request_id", count: { $sum: 1 } } },
+    ]);
+    const bidCountMap = bidCounts.reduce((map, row) => {
+      map[row._id] = row.count;
+      return map;
+    }, {} as Record<string, number>);
+
+    const enriched = requests.map((item) => ({
+      ...item.toObject(),
+      bid_count: bidCountMap[item._id.toString()] || 0,
+    }));
+
     return res.status(200).json({
       message: "Success",
-      requests,
+      requests: enriched,
       counts: countBy(byStatus),
       page,
       total,
       pages: Math.ceil(total / Math.max(limit, 1)),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+adminRouter.get("/artisan-requests/:id", async (req: Request, res: Response) => {
+  try {
+    const request = await ArtisanRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: "Request not found" });
+
+    const bids = await ArtisanRequestBid.find({
+      artisan_request_id: request._id.toString(),
+    }).sort({ createdAt: -1 });
+
+    let linkedQuote = null;
+    if (request.quote_id) {
+      linkedQuote = await Quotes.findById(request.quote_id);
+    }
+
+    let skill = null;
+    if (request.skill_id) {
+      skill = await Skill.findById(request.skill_id).select("title description");
+    }
+
+    return res.status(200).json({
+      message: "Success",
+      request,
+      bids,
+      linkedQuote,
+      skill,
     });
   } catch (error: any) {
     return res.status(500).json({ message: error.message });

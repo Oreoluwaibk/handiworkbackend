@@ -8,6 +8,11 @@ import { processTransaction } from "./transactions";
 import mongoose from "mongoose";
 import Wallet from "../schema/walletSchema";
 import { quoteStatusQuery } from "../utils/jobStatus";
+import {
+  platformCommissionAmount,
+  syncArtisanRequestFromQuote,
+  vendorPayoutAmount,
+} from "../utils/quoteEscrow";
 
 const quoteRouter = Router();
 
@@ -94,7 +99,7 @@ quoteRouter
     }
 
     if (parseFloat(wallet.balance.toString()) < parseFloat(quote.amount.toString())) {
-      res.status(400).json({ message: 'You cannot accept quote more than your account balance!' });
+      res.status(400).json({ message: 'Insufficient wallet balance to accept this quote. Please fund your wallet and try again.' });
       return;
     }
 
@@ -104,6 +109,16 @@ quoteRouter
       });
       return;
     }
+
+    const quoteAmount = parseFloat(quote.amount.toString());
+
+    await processTransaction({
+      user_id: quote.requester.id,
+      type: "debit",
+      amount: quoteAmount,
+      description: `Escrow hold for quote: ${quote.title}`,
+      reference: `quote-escrow-${id}`,
+    });
 
     quote.status = "accepted";
     if (vendor) vendor.is_active = true;
@@ -118,6 +133,7 @@ quoteRouter
 
     await vendor?.save();
     await quote.save();
+    await syncArtisanRequestFromQuote(quote, "in_progress");
 
     res.status(200).json({
       message: "Quote has been accepted successfully!",
@@ -171,6 +187,48 @@ quoteRouter
     res.status(500).json({ message: `Unable to decline quote: ${error.message}` });
   }
 })
+.put("/startwork/:id", authentication, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = (req as any).user;
+
+  try {
+    const quote = await Quotes.findById(id);
+
+    if (!quote) {
+      res.status(404).json({ message: "Quote not found!" });
+      return;
+    }
+
+    if (!isVendor(quote, user)) {
+      res.status(403).json({ message: "Only the vendor can start work on this quote" });
+      return;
+    }
+
+    if (quote.status !== "accepted") {
+      res.status(400).json({ message: "Work can only be started after the quote has been accepted" });
+      return;
+    }
+
+    quote.status = "in_progress";
+
+    await saveNotifcation(
+      "Work started",
+      `${quote.vendor.name} has started work on ${quote.title}`,
+      quote.requester.id,
+      "quote",
+      quote.id
+    );
+
+    await quote.save();
+
+    res.status(200).json({
+      message: "Work marked as in progress",
+      quote,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: `Unable to start work: ${error.message}` });
+  }
+})
 .put("/completetask/:id", authentication, async (req: Request, res: Response) => {
   const { id } = req.params;
   const user = (req as any).user;
@@ -185,6 +243,11 @@ quoteRouter
 
     if (!isVendor(quote, user)) {
       res.status(403).json({ message: "Only the vendor can mark this quote as completed" });
+      return;
+    }
+
+    if (!["accepted", "in_progress"].includes(quote.status)) {
+      res.status(400).json({ message: "Quote must be accepted or in progress before completion" });
       return;
     }
 
@@ -207,6 +270,7 @@ quoteRouter
     );
 
     await quote.save();
+    await syncArtisanRequestFromQuote(quote, "fulfilled");
 
     res.status(200).json({
       message: "Quote has been completed successfully",
@@ -246,6 +310,10 @@ quoteRouter
       await vendor.save();
     }
 
+    const quoteAmount = parseFloat(quote.amount?.toString()!);
+    const payout = vendorPayoutAmount(quoteAmount);
+    const commission = platformCommissionAmount(quoteAmount);
+
     await saveNotifcation(
       "Quote verified!",
       `Your quote for ${quote.title} has been verified`,
@@ -256,7 +324,7 @@ quoteRouter
 
     await saveNotifcation(
       "Quote verified!",
-      `Payment for ${quote.title} has been released`,
+      `Payment of ₦${payout.toLocaleString()} has been released (5% platform fee: ₦${commission.toLocaleString()})`,
       quote.vendor?.id!,
       "quote",
       id
@@ -265,20 +333,13 @@ quoteRouter
     await processTransaction({
       user_id: quote.vendor?.id!,
       type: "deposit",
-      amount: parseFloat(quote.amount?.toString()!),
-      description: "Payment for verified and completed quote",
+      amount: payout,
+      description: `Payment for verified quote (95% after 5% platform commission)`,
       reference: `quote-verify-${id}-vendor`,
     });
 
-    await processTransaction({
-      user_id: quote.requester?.id!,
-      type: "withdraw",
-      amount: parseFloat(quote.amount?.toString()!),
-      description: "Payment for verified and completed quote",
-      reference: `quote-verify-${id}-requester`,
-    });
-
     await quote.save();
+    await syncArtisanRequestFromQuote(quote, "delivered");
 
     res.status(200).json({
       message: "Quote has been verified successfully and payment has been made",

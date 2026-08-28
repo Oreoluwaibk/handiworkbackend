@@ -9,6 +9,7 @@ import { requireAdminKey } from '../middleware/adminAuth';
 import User from '../schema/userSchema';
 import { saveNotifcation } from '../utils/saveNotification';
 import { confirmUserPassword } from '../utils/password';
+import { requesterHasActiveEscrow } from '../utils/quoteEscrow';
 
 const transactionRouter = express.Router();
 
@@ -508,6 +509,13 @@ transactionRouter.post("/withdraw", authentication, async (req, res) => {
 
     const wallet = await Wallet.findOne({ user_id: user._id });
     if (!wallet) return res.status(404).json({ message: "Wallet not found" });
+
+    const hasActiveJob = await requesterHasActiveEscrow(user._id.toString());
+    if (hasActiveJob) {
+      return res.status(400).json({
+        message: "Withdrawals are locked while you have an active accepted job. Complete or verify the job first.",
+      });
+    }
 
     if (wallet.balance < withdrawalAmount) {
       return res.status(400).json({ message: "Insufficient wallet balance" });

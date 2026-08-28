@@ -24,6 +24,8 @@ const PROFILE_FIELDS = [
   "nin",
   "skill",
   "work_images",
+  "vendor_type",
+  "primary_skill",
 ] as const;
 
 const uploadDir = path.join(__dirname, '../uploads');
@@ -268,6 +270,12 @@ userRouter
     }
 
     user.is_vendor = !user.is_vendor;
+
+    if (!user.is_vendor) {
+      user.vendor_type = null;
+      user.primary_skill = null;
+    }
+
     await user.save();
 
     res.status(200).json({
@@ -279,6 +287,48 @@ userRouter
   } catch (error: any) {
     res.status(500).json({
       message: "This user type cannot be updated",
+      error: error.message,
+    });
+  }
+})
+.put("/setup-vendor", authentication, async (req: Request, res: Response) => {
+  const { vendor_type, primary_skill } = req.body;
+  const user = (req as any).user;
+
+  try {
+    if (!user.is_vendor) {
+      res.status(400).json({ message: "Only vendors can complete vendor setup" });
+      return;
+    }
+
+    if (!vendor_type || !["artisan", "vendor"].includes(vendor_type)) {
+      res.status(400).json({ message: "Please select a valid vendor type (artisan or vendor)" });
+      return;
+    }
+
+    if (vendor_type === "artisan" && !primary_skill) {
+      res.status(400).json({ message: "Artisans must select their craft from the list" });
+      return;
+    }
+
+    user.vendor_type = vendor_type;
+    user.primary_skill = vendor_type === "artisan" ? primary_skill : null;
+
+    if (vendor_type === "artisan" && primary_skill) {
+      const skills = new Set(user.skill || []);
+      skills.add(primary_skill);
+      user.skill = Array.from(skills);
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      message: "Vendor profile setup completed",
+      user,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      message: "Unable to complete vendor setup",
       error: error.message,
     });
   }

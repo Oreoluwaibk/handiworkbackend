@@ -16,6 +16,8 @@ interface IUser {
   skill?: string[];
   area: string;
   is_vendor: boolean;
+  vendor_type?: "artisan" | "vendor" | null;
+  primary_skill?: string | null;
   is_recommended?: boolean;
   is_verified: boolean;
   is_active: boolean;
@@ -83,6 +85,13 @@ const userSchema = new Schema<IUser>(
     email: { required: true, type: String },
     skill: { required: false, type: [String], default: [] },
     is_vendor: { required: true, type: Boolean, default: false },
+    vendor_type: {
+      required: false,
+      type: String,
+      enum: ["artisan", "vendor", null],
+      default: null,
+    },
+    primary_skill: { required: false, type: String, default: null },
     is_recommended: { required: false, type: Boolean, default: false },
     is_verified: { required: false, type: Boolean, default: false },
     is_active: { required: false, type: Boolean, default: false },

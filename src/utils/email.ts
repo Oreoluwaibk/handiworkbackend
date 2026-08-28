@@ -345,7 +345,11 @@ export const sendArtisanRequestEmail = async (data: any) => {
 const REQUEST_STATUS_COPY: Record<string, { label: string; message: string }> = {
   pending: {
     label: "Pending",
-    message: "Your request is pending. We will assign an artisan shortly.",
+    message: "Your request is open. Matching artisans can send bids.",
+  },
+  assigned: {
+    label: "Artisan selected",
+    message: "An artisan has been selected. Please accept the bid to confirm the job.",
   },
   in_progress: {
     label: "In progress",

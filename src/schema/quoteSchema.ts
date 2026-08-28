@@ -20,6 +20,7 @@ export interface IQuote {
     };
     amount: number;
     status: string;
+    artisan_request_id?: string | null;
 }
 
 const quoteSchema = new Schema<IQuote>({
@@ -41,6 +42,7 @@ const quoteSchema = new Schema<IQuote>({
     },
     status: {required: false, type: String, default: "pending"},
     amount: {required: false, type: Number, default: 0},
+    artisan_request_id: { required: false, type: String, default: null },
 }, { timestamps: true })
 
 quoteSchema.virtual("pipeline_status").get(function () {
