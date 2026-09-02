@@ -40,6 +40,11 @@ export default function handleSocket(io: Server) {
     const chatId = (socket as any).chatId as string;
     console.log("✅ New socket connection:", socket.id);
 
+    // Always join the authenticated user's room so chat/notifications work
+    // even if the client misses the joinRoom emit after account switch.
+    socket.join(chatId);
+    console.log(`📥 Auto-joined room ${chatId}`);
+
     socket.on("joinRoom", (userId: string) => {
       if (userId !== chatId) {
         socket.emit("error", { message: "Cannot join another user's room" });

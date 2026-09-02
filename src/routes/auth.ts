@@ -10,6 +10,7 @@ import { applyDeviceUpdate } from "../utils/device";
 import { emailMatch, isValidNigerianPhone, normalizeEmail, normalizePhone } from "../utils/authIdentity";
 import { verifyGoogleIdToken, exchangeGoogleAuthCode } from "../utils/googleAuth";
 import { authLimiter } from "../middleware/rateLimit";
+import { claimExpoPushToken, releaseExpoPushToken } from "../utils/pushTokens";
 
 function sendGoogleAppRedirect(res: Response, params: Record<string, string>) {
   const appUrl = `quikwrk://oauthredirect?${new URLSearchParams(params).toString()}`;
@@ -188,9 +189,7 @@ authRouter
     await user.save();
 
     if (expoPushToken) {
-      await User.findByIdAndUpdate(user._id, {
-        $addToSet: { expo_push_tokens: expoPushToken },
-      });
+      await claimExpoPushToken(user._id.toString(), expoPushToken);
     }
 
     const token = createSessionToken(user);
@@ -276,9 +275,7 @@ authRouter
     await user.save();
 
     if (expoPushToken) {
-      await User.findByIdAndUpdate(user._id, {
-        $addToSet: { expo_push_tokens: expoPushToken },
-      });
+      await claimExpoPushToken(user._id.toString(), expoPushToken);
     }
 
     console.log("[GoogleAuth] POST /auth/google success", { email: user.email });
@@ -430,13 +427,33 @@ authRouter
     return res.status(404).json({ message: "User not found" });
   }
 
-  user.expo_push_tokens = Array.from(new Set([...(user.expo_push_tokens || []), expoPushToken]));
+  await claimExpoPushToken(user._id.toString(), expoPushToken);
   applyDeviceUpdate(user, device);
   await user.save();
 
   return res.status(200).json({
     success: true,
     message: "Push token saved",
+  });
+})
+.post("/push-token/clear", authentication, async (req: AuthenticatedRequest, res: Response) => {
+  const { expoPushToken } = req.body || {};
+  const user = await User.findById(req.user._id);
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  if (expoPushToken) {
+    await releaseExpoPushToken(user._id.toString(), expoPushToken);
+  } else {
+    user.expo_push_tokens = [];
+    await user.save();
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Push token cleared",
   });
 });
 

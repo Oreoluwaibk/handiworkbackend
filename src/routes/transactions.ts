@@ -194,6 +194,8 @@ transactionRouter.post("/subscribe", authentication, async (req, res) => {
       access_code: data.access_code,
       reference: data.reference,
       planType,
+      planCode,
+      amount: amount / 100,
     });
   } catch (error: any) {
     console.error("Subscription init error:", error.response?.data || error);
