@@ -26,6 +26,7 @@ import { refundQuoteEscrow } from "../utils/quoteEscrow";
 import AuditLog from "../schema/auditLogSchema";
 import AppVersion from "../schema/appVersionSchema";
 import { getOrCreateAppVersionConfig } from "./app";
+import adminMessagesRouter from "./adminMessages";
 
 const adminRouter = Router();
 const saltRounds = 10;
@@ -260,6 +261,7 @@ adminRouter.post("/auth/setup", requireAdminKey, async (req: Request, res: Respo
 });
 
 adminRouter.use(adminAuthentication);
+adminRouter.use(adminMessagesRouter);
 
 adminRouter.get("/auth/me", async (req: Request, res: Response) => {
   return res.status(200).json({

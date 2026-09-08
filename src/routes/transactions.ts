@@ -1,5 +1,4 @@
 import express from 'express';
-import crypto from 'crypto';
 import axios from 'axios';
 
 import Wallet from '../schema/walletSchema';
@@ -7,13 +6,13 @@ import Transaction from '../schema/transactionSchema';
 import { authentication } from '../middleware/authentication';
 import { requireAdminKey } from '../middleware/adminAuth';
 import User from '../schema/userSchema';
-import { saveNotifcation } from '../utils/saveNotification';
 import { confirmUserPassword } from '../utils/password';
 import { requesterHasActiveEscrow } from '../utils/quoteEscrow';
 import { processTransaction, validateTransactionAmount } from '../utils/ledger';
 import { verifyPayment } from '../utils/paystack';
 import { normalizeEmail } from '../utils/authIdentity';
 import { moneyLimiter } from '../middleware/rateLimit';
+import { activateUserSubscription, normalizePlanName } from '../utils/subscription';
 
 const transactionRouter = express.Router();
 
@@ -178,6 +177,11 @@ transactionRouter.post("/subscribe", authentication, async (req, res) => {
         email: user.email,
         amount,
         plan: planCode,
+        metadata: {
+          purpose: "subscription",
+          planType: planType === "premium" ? "premium" : "basic",
+          user_id: user._id.toString(),
+        },
       },
       {
         headers: {
@@ -216,6 +220,8 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
       return res.status(200).json({
         message: "Subscription already active",
         plan: existingUser.subscription.plan_name,
+        subscription: existingUser.subscription,
+        user: existingUser,
       });
     }
 
@@ -223,7 +229,10 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
     const data = verifyResponse.data;
 
     if (data.status !== "success") {
-      return res.status(400).json({ message: "Subscription not successful" });
+      return res.status(400).json({
+        message: "Subscription payment not successful yet. Please wait a moment and try again.",
+        status: data.status,
+      });
     }
 
     const payerEmail = normalizeEmail(data.customer?.email);
@@ -232,40 +241,29 @@ transactionRouter.get("/subscribe/verify/:reference", authentication, async (req
       return res.status(403).json({ message: "Payment does not belong to this account" });
     }
 
-    const planName = data.plan_object?.name
-      ? `${data.plan_object.name} Plan`
-      : "Basic Plan";
+    const metadata = data.metadata || {};
+    const planName = normalizePlanName(
+      data.plan_object?.name || data.plan?.name || metadata.planType,
+      metadata.planType
+    );
     const amount = (data.amount || 0) / 100;
 
-    let referralCode = existingUser?.referral_code;
-
-    if (!referralCode) {
-      referralCode = `REF-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
-    }
-
-    await User.findByIdAndUpdate(user._id, {
-      $set: {
-        "subscription.plan_name": planName,
-        "subscription.amount": amount,
-        "subscription.reference": reference,
-        "subscription.active": true,
-        "subscription.start_date": new Date(),
-        "subscription.renewed_at": new Date(),
-        referral_code: referralCode,
-        is_recommended: true,
-      },
+    const updatedUser = await activateUserSubscription({
+      userId: user._id.toString(),
+      planName,
+      amount,
+      reference,
+      notify: !(
+        existingUser?.subscription?.active &&
+        existingUser?.subscription?.reference === reference
+      ),
     });
-
-    await saveNotifcation(
-      "Subscription Activated",
-      `You are now subscribed to the ${planName} plan.`,
-      user._id,
-      "subscription"
-    );
 
     res.status(200).json({
       message: "Subscription verified and activated successfully",
       plan: planName,
+      subscription: updatedUser?.subscription || null,
+      user: updatedUser,
     });
   } catch (error: any) {
     console.error("Subscription verification error:", error.response?.data || error);

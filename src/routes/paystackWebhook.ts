@@ -7,8 +7,23 @@ import { saveNotifcation } from "../utils/saveNotification";
 import { verifyPayment } from "../utils/paystack";
 import { processTransaction } from "../utils/ledger";
 import { normalizeEmail } from "../utils/authIdentity";
+import {
+  activateUserSubscription,
+  findUserByCustomerEmail,
+  normalizePlanName,
+} from "../utils/subscription";
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY as string;
+
+function isSubscriptionCharge(data: any) {
+  const metadata = data?.metadata || {};
+  return (
+    metadata.purpose === "subscription" ||
+    Boolean(data?.plan) ||
+    Boolean(data?.plan_object) ||
+    Boolean(metadata.planType)
+  );
+}
 
 export async function handlePaystackWebhook(req: Request, res: Response) {
   try {
@@ -26,16 +41,35 @@ export async function handlePaystackWebhook(req: Request, res: Response) {
     if (event.event === "charge.success") {
       const { reference } = event.data;
 
-      const existing = await Transaction.findOne({ reference });
-      if (!existing) {
-        try {
-          const verifyResponse = await verifyPayment(reference);
+      try {
+        const verifyResponse = await verifyPayment(reference);
+        if (verifyResponse.data.status === "success") {
+          const data = verifyResponse.data;
+          const { amount, customer } = data;
+          const user =
+            (await findUserByCustomerEmail(customer?.email)) ||
+            (data.metadata?.user_id
+              ? await User.findById(data.metadata.user_id)
+              : null);
 
-          if (verifyResponse.data.status === "success") {
-            const { amount, customer } = verifyResponse.data;
-            const user = await User.findOne({ email: normalizeEmail(customer.email) });
+          if (user && isSubscriptionCharge(data)) {
+            const alreadyActive =
+              user.subscription?.active && user.subscription?.reference === reference;
 
-            if (user) {
+            if (!alreadyActive) {
+              await activateUserSubscription({
+                userId: user._id.toString(),
+                planName: normalizePlanName(
+                  data.plan_object?.name || data.plan?.name || data.metadata?.planType,
+                  data.metadata?.planType
+                ),
+                amount: amount / 100,
+                reference,
+              });
+            }
+          } else if (user) {
+            const existing = await Transaction.findOne({ reference });
+            if (!existing) {
               await processTransaction({
                 user_id: user._id,
                 type: "deposit",
@@ -45,32 +79,24 @@ export async function handlePaystackWebhook(req: Request, res: Response) {
               });
             }
           }
-        } catch (err: any) {
-          console.error("Paystack verification failed:", err.message);
         }
+      } catch (err: any) {
+        console.error("Paystack verification failed:", err.message);
       }
     }
 
     if (event.event === "subscription.create" || event.event === "invoice.create") {
-      const { customer, plan, amount } = event.data;
-      const user = await User.findOne({ email: normalizeEmail(customer.email) });
+      const { customer, plan, amount, reference } = event.data;
+      const user = await findUserByCustomerEmail(customer?.email);
 
       if (user) {
-        await User.findByIdAndUpdate(user._id, {
-          $set: {
-            "subscription.plan_name": plan.name,
-            "subscription.amount": amount / 100,
-            "subscription.active": true,
-            "subscription.renewed_at": new Date(),
-          },
+        await activateUserSubscription({
+          userId: user._id.toString(),
+          planName: normalizePlanName(plan?.name),
+          amount: amount / 100,
+          reference: reference || user.subscription?.reference,
+          notify: event.event === "subscription.create",
         });
-
-        await saveNotifcation(
-          "Subscription Renewed",
-          `Your ${plan.name} plan has been renewed.`,
-          user._id,
-          "subscription"
-        );
       }
     }
 
